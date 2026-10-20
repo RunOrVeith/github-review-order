@@ -157,3 +157,6 @@ test-results
 
 # svelte-check
 .svelte-check
+
+# Local dev browser settings
+web-ext.config.ts

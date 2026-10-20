@@ -1,9 +1,11 @@
 import type { ContentScriptContext } from '#imports';
+import type { ReviewFile } from '@/utils/file-tree';
 // ?inline crashes in WXT's content script build, and the CSS needs no processing anyway
 import styles from './tree-markers.css?raw';
 
 export interface TreeMarkers {
-  setCurrent(index: number): void;
+  /** Marks the step's file as current and returns whether the tree has it. */
+  setCurrent(index: number): boolean;
   stop(): void;
 }
 
@@ -11,9 +13,9 @@ export interface TreeMarkers {
  * Shows the review order in GitHub's file tree and keeps it there while GitHub
  * re-renders or lazy-loads the tree.
  */
-export function createTreeMarkers(ctx: ContentScriptContext, order: string[]): TreeMarkers {
-  const steps = reviewSteps(order);
-  let currentId: string | null = null;
+export function createTreeMarkers(ctx: ContentScriptContext, files: ReviewFile[]): TreeMarkers {
+  const steps = reviewSteps(files);
+  let current: ReviewFile | null = null;
   let tree: HTMLElement | null = null;
   let frame: number | null = null;
   // A navigation still in flight when the panel closes must not mark the tree again
@@ -27,7 +29,7 @@ export function createTreeMarkers(ctx: ContentScriptContext, order: string[]): T
   function apply(): Map<string, HTMLElement> {
     if (!tree?.isConnected) tree = findTree(document);
     const entries = tree ? findTreeEntries(tree) : new Map<string, HTMLElement>();
-    markTreeEntries(entries, steps, currentId);
+    markTreeEntries(entries, steps, current);
     return entries;
   }
 
@@ -60,11 +62,12 @@ export function createTreeMarkers(ctx: ContentScriptContext, order: string[]): T
 
   return {
     setCurrent(index) {
-      if (stopped) return;
-      currentId = order[index] ?? null;
+      if (stopped) return false;
+      current = files[index] ?? null;
 
-      const entry = currentId ? apply().get(currentId) : undefined;
+      const entry = current ? treeEntryFor(apply(), current) : undefined;
       if (entry) scrollTreeTo(entry);
+      return entry !== undefined;
     },
     stop,
   };

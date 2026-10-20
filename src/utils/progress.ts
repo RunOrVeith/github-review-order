@@ -11,6 +11,9 @@ export interface CachedReview {
   items: ReviewItem[];
 }
 
+/** Whether Next and Previous skip files ticked as viewed; shared by all PRs. */
+export const skipViewed = storage.defineItem<boolean>('local:skipViewed', { fallback: true });
+
 const pullKey = (pr: PullRef) => `${pr.owner}/${pr.repo}#${pr.number}`;
 
 // storage.session isn't readable from content scripts by default, so progress lives in local storage

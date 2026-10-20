@@ -12,6 +12,9 @@ const A = `diff-${'a'.repeat(64)}`;
 const B = `diff-${'b'.repeat(64)}`;
 const C = `diff-${'c'.repeat(64)}`;
 
+// The classic tree identifies files by anchor, so the path doesn't matter here
+const file = (anchor: string) => ({ path: `path-of-${anchor}`, anchor });
+
 // Trimmed from GitHub's classic file tree (https://github.com/microsoft/vscode/pull/342841/files)
 function fileEntry(anchor: string, path: string, extra = '') {
   return `
@@ -81,7 +84,7 @@ describe('findTreeEntries', () => {
 
 describe('markTreeEntries', () => {
   test('numbers files in the order, warns about the rest and marks the current one', () => {
-    markTreeEntries(findTreeEntries(document), reviewSteps([C, A]), A);
+    markTreeEntries(findTreeEntries(document), reviewSteps([C, A].map(file)), file(A));
 
     expect(entry(C).dataset.reviewOrderStep).toBe('1');
     expect(entry(A).dataset.reviewOrderStep).toBe('2');
@@ -95,8 +98,8 @@ describe('markTreeEntries', () => {
 
   test('moves the current marker', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([A, B, C]), A);
-    markTreeEntries(entries, reviewSteps([A, B, C]), B);
+    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), file(A));
+    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), file(B));
 
     expect(entry(A).hasAttribute('data-review-order-current')).toBe(false);
     expect(entry(B).hasAttribute('data-review-order-current')).toBe(true);
@@ -111,12 +114,12 @@ describe('markTreeEntries', () => {
 
   test('changes nothing when called again with the same state', async () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([C, A]), A);
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
 
     const records: MutationRecord[] = [];
     const observer = new MutationObserver((batch) => records.push(...batch));
     observer.observe(document.body, { attributes: true, childList: true, subtree: true });
-    markTreeEntries(entries, reviewSteps([C, A]), A);
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
     await Promise.resolve();
     observer.disconnect();
 
@@ -129,8 +132,8 @@ describe('markTreeEntries badges', () => {
 
   test('adds one badge per file and none to folders', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([C, A]), A);
-    markTreeEntries(entries, reviewSteps([C, A]), C);
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(C));
 
     expect(marker(C)).toHaveLength(1);
     expect(marker(C)[0]?.textContent).toBe('1');
@@ -142,8 +145,8 @@ describe('markTreeEntries badges', () => {
 
   test('updates the badge when the order changes', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([A]), null);
-    markTreeEntries(entries, reviewSteps([B, A]), null);
+    markTreeEntries(entries, reviewSteps([A].map(file)), null);
+    markTreeEntries(entries, reviewSteps([B, A].map(file)), null);
 
     expect(marker(A)[0]?.textContent).toBe('2');
     expect(marker(B)[0]?.textContent).toBe('1');
@@ -152,13 +155,20 @@ describe('markTreeEntries badges', () => {
 
 describe('reviewSteps', () => {
   test('keeps the first step of a file listed twice', () => {
-    expect(reviewSteps([A, B, A])).toEqual(new Map([[A, 1], [B, 2]]));
+    expect(reviewSteps([A, B, A].map(file))).toEqual(
+      new Map([
+        [file(A).path, 1],
+        [A, 1],
+        [file(B).path, 2],
+        [B, 2],
+      ]),
+    );
   });
 });
 
 describe('clearTreeMarks', () => {
   test('removes every marker and only the titles it added', () => {
-    markTreeEntries(findTreeEntries(document), reviewSteps([A]), A);
+    markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), file(A));
     clearTreeMarks(document);
 
     for (const anchor of [A, B, C]) {
@@ -194,5 +204,50 @@ describe('scrollTopToReveal', () => {
   test('centres items above the visible area, but never past the top', () => {
     expect(scrollTopToReveal(container, { top: 40, bottom: 70, height: 30 }, 200)).toBe(5);
     expect(scrollTopToReveal(container, { top: 40, bottom: 70, height: 30 }, 50)).toBe(0);
+  });
+});
+
+describe('the /changes tree', () => {
+  // Trimmed from GitHub's /changes view: Primer React's TreeView, with the file's path as its id
+  function reactFile(path: string) {
+    return `
+      <li aria-level="2" class="PRIVATE_TreeView-item" tabindex="-1" id="${path}" role="treeitem"
+          aria-label="${path.split('/').pop()}" aria-describedby="_r_251_" aria-selected="false">
+        <div class="PRIVATE_TreeView-item-container" style="--level: 2;">
+          <div id="_r_250_" class="PRIVATE_TreeView-item-content">
+            <div class="PRIVATE_VisuallyHidden" aria-hidden="true" id="_r_251_"></div>
+            <span class="PRIVATE_TreeView-item-content-text">${path.split('/').pop()}</span>
+          </div>
+        </div>
+      </li>`;
+  }
+
+  const a = { path: 'src/a.ts', anchor: A };
+  const b = { path: 'src/b.ts', anchor: B };
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <ul role="tree" aria-label="File Tree">
+        <li id="src" role="treeitem" aria-level="1" aria-expanded="true" aria-label="src">
+          <div class="PRIVATE_TreeView-item-container"><span>src</span></div>
+          <ul role="group">${reactFile(a.path)}${reactFile(b.path)}</ul>
+        </li>
+        ${reactFile('README.md')}
+      </ul>`;
+  });
+
+  test('finds files by path and skips folders and React ids', () => {
+    expect([...findTreeEntries(document).keys()]).toEqual(['src/a.ts', 'src/b.ts', 'README.md']);
+    expect(findTree(document)).toBe(document.querySelector('[role="tree"]'));
+  });
+
+  test('marks files by path', () => {
+    markTreeEntries(findTreeEntries(document), reviewSteps([b, a]), a);
+
+    expect(document.getElementById('src/b.ts')!.dataset.reviewOrderStep).toBe('1');
+    expect(document.getElementById('src/a.ts')!.dataset.reviewOrderStep).toBe('2');
+    expect(document.getElementById('src/a.ts')!.hasAttribute('data-review-order-current')).toBe(true);
+    expect(document.getElementById('README.md')!.hasAttribute('data-review-order-unlisted')).toBe(true);
+    expect(document.getElementById('src')!.hasAttribute('data-review-order-unlisted')).toBe(false);
   });
 });

@@ -1,9 +1,16 @@
 // Everything that depends on GitHub's file tree markup lives here
 const TREE_SELECTOR = '[role="tree"]';
 const TREE_ITEM_SELECTOR = '[role="treeitem"]';
-const ENTRY_WITH_ID_SELECTOR = '[role="tree"] [role="treeitem"][id*="diff-"]';
+const ENTRY_SELECTOR = '[role="tree"] [role="treeitem"][id]';
 const DIFF_LINK_SELECTOR = '[role="tree"] a[href*="#diff-"]';
 const ANCHOR = /diff-[0-9a-f]{64}/;
+// React's useId values, which the /changes tree uses for other elements' ids
+const GENERATED_ID = /^(_r_|_R_|:r)/;
+
+export interface ReviewFile {
+  path: string;
+  anchor: string;
+}
 
 const STEP = 'data-review-order-step';
 const UNLISTED = 'data-review-order-unlisted';
@@ -18,34 +25,53 @@ type Rect = Pick<DOMRect, 'top' | 'bottom' | 'height'>;
 /** The file tree on a PR's changes page, if it has one. */
 export function findTree(root: ParentNode): HTMLElement | null {
   return (
-    Array.from(root.querySelectorAll<HTMLElement>(TREE_SELECTOR)).find((tree) =>
-      tree.querySelector(`${TREE_ITEM_SELECTOR}[id*="diff-"], a[href*="#diff-"]`),
-    ) ?? null
+    Array.from(root.querySelectorAll<HTMLElement>(TREE_SELECTOR)).find((tree) => findTreeEntries(tree).size > 0) ??
+    null
   );
 }
 
-/** Maps each file's anchor (`diff-<sha256 of its path>`) to its entry in GitHub's file tree. */
+/**
+ * Maps each file to its entry in GitHub's file tree. Classic trees identify
+ * files by their anchor (`diff-<sha256 of the path>`), the /changes tree by
+ * their path, so entries are keyed by whichever the markup has.
+ */
 export function findTreeEntries(root: ParentNode): Map<string, HTMLElement> {
-  const entries = new Map<string, HTMLElement>();
-  const add = (entry: HTMLElement | null, anchor: string | undefined) => {
-    if (entry && anchor && !entries.has(anchor)) entries.set(anchor, entry);
-  };
+  const keys = new Map<HTMLElement, string>();
 
-  for (const entry of root.querySelectorAll<HTMLElement>(ENTRY_WITH_ID_SELECTOR)) {
-    add(entry, ANCHOR.exec(entry.id)?.[0]);
+  for (const entry of root.querySelectorAll<HTMLElement>(ENTRY_SELECTOR)) {
+    if (isFolder(entry)) continue;
+    const anchor = ANCHOR.exec(entry.id)?.[0];
+    if (anchor) keys.set(entry, anchor);
+    else if (!GENERATED_ID.test(entry.id)) keys.set(entry, entry.id);
   }
-  // Each link belongs to its closest entry, so folders never count as files
+  // Each link belongs to its closest entry, so a folder never gets its files' links
   for (const link of root.querySelectorAll(DIFF_LINK_SELECTOR)) {
-    add(link.closest<HTMLElement>(TREE_ITEM_SELECTOR), ANCHOR.exec(link.getAttribute('href') ?? '')?.[0]);
+    const entry = link.closest<HTMLElement>(TREE_ITEM_SELECTOR);
+    const anchor = ANCHOR.exec(link.getAttribute('href') ?? '')?.[0];
+    if (entry && anchor && !keys.has(entry) && !isFolder(entry)) keys.set(entry, anchor);
+  }
+
+  const entries = new Map<string, HTMLElement>();
+  for (const [entry, key] of keys) {
+    if (!entries.has(key)) entries.set(key, entry);
   }
   return entries;
 }
 
-/** Each anchor's step in the review order, counting from 1. A file listed twice keeps its first step. */
-export function reviewSteps(order: string[]): Map<string, number> {
+function isFolder(entry: HTMLElement): boolean {
+  return entry.hasAttribute('aria-expanded') || entry.dataset.treeEntryType === 'directory';
+}
+
+/**
+ * Each file's step in the review order, counting from 1, under both its path
+ * and its anchor. A file listed twice keeps its first step.
+ */
+export function reviewSteps(files: ReviewFile[]): Map<string, number> {
   const steps = new Map<string, number>();
-  order.forEach((anchor, index) => {
-    if (!steps.has(anchor)) steps.set(anchor, index + 1);
+  files.forEach(({ path, anchor }, index) => {
+    for (const key of [path, anchor]) {
+      if (!steps.has(key)) steps.set(key, index + 1);
+    }
   });
   return steps;
 }
@@ -57,16 +83,22 @@ export function reviewSteps(order: string[]): Map<string, number> {
 export function markTreeEntries(
   entries: Map<string, HTMLElement>,
   steps: Map<string, number>,
-  currentId: string | null,
+  current: ReviewFile | null,
 ): void {
-  for (const [id, entry] of entries) {
-    const step = steps.get(id);
+  for (const [key, entry] of entries) {
+    const step = steps.get(key);
+    const isCurrent = key === current?.path || key === current?.anchor;
     setAttribute(entry, STEP, step === undefined ? null : String(step));
     setAttribute(entry, UNLISTED, step === undefined ? '' : null);
-    setAttribute(entry, CURRENT, id === currentId ? '' : null);
+    setAttribute(entry, CURRENT, isCurrent ? '' : null);
     setMarker(entry, step === undefined ? '!' : String(step));
     setUnlistedTitle(entry, step === undefined);
   }
+}
+
+/** A file's tree entry, whichever way the tree identifies it. */
+export function treeEntryFor(entries: Map<string, HTMLElement>, file: ReviewFile): HTMLElement | undefined {
+  return entries.get(file.path) ?? entries.get(file.anchor);
 }
 
 export function clearTreeMarks(root: ParentNode): void {

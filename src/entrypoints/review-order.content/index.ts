@@ -3,6 +3,7 @@ import type { PullRef } from '@/utils/github';
 import type { ReviewItem } from '@/utils/review-order';
 import Panel from './Panel.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
+import { createViewedState, type ViewedState } from './viewed';
 
 interface Review {
   pr: PullRef;
@@ -10,6 +11,7 @@ interface Review {
   /** The files' anchors on the changes page, in review order. */
   anchors: string[];
   markers: TreeMarkers;
+  viewed: ViewedState;
 }
 
 export default defineContentScript({
@@ -22,6 +24,8 @@ export default defineContentScript({
   async main(ctx) {
     let ui: ShadowRootContentScriptUi<ReturnType<typeof mount>> | undefined;
     let markers: TreeMarkers | undefined;
+    // Lives as long as the changes tab is open, so toggles seen there outlast panel rebuilds
+    let viewed: ViewedState | undefined;
     // The PR whose changes tab is open; hash-only URL changes from scrolling keep it unchanged
     let active: { key: string; pr: PullRef } | null = null;
     // What the panel currently shows, so re-checks only rebuild it when something changed
@@ -43,11 +47,13 @@ export default defineContentScript({
 
       active = pr && key ? { key, pr } : null;
       hide();
+      viewed?.stop();
+      viewed = active ? createViewedState(ctx) : undefined;
       if (pr && key) await show(pr, key);
     }
 
     /** Shows the panel for the PR's current review order, or rebuilds it if that changed. */
-    async function show(pr: PullRef, key: string) {
+    async function show(pr: PullRef, key: string, rechecking = false) {
       // Reading the description takes a full page request, so show the last known order meanwhile
       if (!ui) {
         const cached = await loadCachedReview(pr);
@@ -62,16 +68,22 @@ export default defineContentScript({
       const fingerprint = items ? reviewFingerprint(page.headSha, items) : null;
       void saveCachedReview(pr, items && fingerprint ? { fingerprint, items } : null);
       if (!items || !fingerprint) return hide();
-      if (fingerprint !== shownFingerprint) await mountPanel(pr, key, fingerprint, items);
+      if (fingerprint === shownFingerprint) return;
+
+      // GitHub unticks files changed by new commits, but the page's embedded states don't update
+      if (rechecking) await viewed?.refresh(pr);
+      await mountPanel(pr, key, fingerprint, items);
     }
 
     async function mountPanel(pr: PullRef, key: string, fingerprint: string, items: ReviewItem[]) {
-      const [initialIndex, initialPosition, anchors] = await Promise.all([
+      const [initialIndex, initialPosition, initialSkipViewed, anchors] = await Promise.all([
         loadProgress(pr, fingerprint),
         panelPosition.getValue(),
+        skipViewed.getValue(),
         Promise.all(items.map((item) => diffAnchorId(item.path))),
       ]);
-      if (active?.key !== key) return;
+      const viewedState = viewed;
+      if (active?.key !== key || !viewedState) return;
 
       // Assigned right before mounting; the panel navigates to its first step as soon as it mounts
       let review: Review;
@@ -87,8 +99,12 @@ export default defineContentScript({
               items,
               initialIndex,
               initialPosition,
+              initialSkipViewed,
+              isViewed: (index) => viewedState.isViewed(anchors[index]!),
+              watchViewed: (onChange) => viewedState.watch(onChange),
               onNavigate: (index) => navigate(review, index),
               onMove: (position) => void panelPosition.setValue(position),
+              onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
               onClose: hide,
             },
           }),
@@ -101,7 +117,8 @@ export default defineContentScript({
 
       hide();
       shownFingerprint = fingerprint;
-      review = { pr, fingerprint, anchors, markers: createTreeMarkers(ctx, anchors) };
+      const files = items.map((item, index) => ({ path: item.path, anchor: anchors[index]! }));
+      review = { pr, fingerprint, anchors, markers: createTreeMarkers(ctx, files), viewed: viewedState };
       markers = review.markers;
       ui = newUi;
       ui.mount();
@@ -111,7 +128,7 @@ export default defineContentScript({
     function recheckOpenPanel() {
       // A closed panel stays closed until the changes tab is opened again
       if (!active || !ui || recheck) return;
-      recheck = show(active.pr, active.key).finally(() => (recheck = null));
+      recheck = show(active.pr, active.key, true).finally(() => (recheck = null));
     }
 
     // The event can fire before location.href is updated, so use the URL it carries
@@ -140,8 +157,9 @@ async function navigate(review: Review, index: number) {
   // Clear the hash first so jumping to the file that's already selected still scrolls
   if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
   location.hash = id;
-  review.markers.setCurrent(index);
-  const found = document.getElementById(id) !== null;
+  const inTree = review.markers.setCurrent(index);
+  // Large PRs only render the files near the screen, so the page alone can't tell what's in the PR
+  const found = review.viewed.isInPr(id) || inTree;
 
   await saveProgress(review.pr, review.fingerprint, index);
   return found;
