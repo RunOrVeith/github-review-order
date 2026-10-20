@@ -4,6 +4,7 @@ const TREE_ITEM_SELECTOR = '[role="treeitem"]';
 const ENTRY_SELECTOR = '[role="tree"] [role="treeitem"][id]';
 const DIFF_LINK_SELECTOR = '[role="tree"] a[href*="#diff-"]';
 const ANCHOR = /diff-[0-9a-f]{64}/;
+const FILE_ANCHOR = /^diff-[0-9a-f]{64}$/;
 // React's useId values, which the /changes tree uses for other elements' ids
 const GENERATED_ID = /^(_r_|_R_|:r)/;
 
@@ -15,12 +16,25 @@ export interface ReviewFile {
 const STEP = 'data-review-order-step';
 const UNLISTED = 'data-review-order-unlisted';
 const CURRENT = 'data-review-order-current';
+const VIEWED = 'data-review-order-viewed';
+// Holds the eye of viewed files, then the step or warning
+const BADGES = 'data-review-order-badges';
 const MARKER = 'data-review-order-marker';
+const EYE = 'data-review-order-eye';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// GitHub's "eye" Octicon (MIT licensed), as on its Watch button
+const EYE_PATH =
+  'M8 2c1.981 0 3.671.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 0 1 0 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.671-.992-4.933-2.078C1.797 10.83.88 9.576.43 8.898a1.62 1.62 0 0 1 0-1.798c.45-.677 1.367-1.931 2.637-3.022C4.33 2.992 6.019 2 8 2ZM1.679 7.932a.12.12 0 0 0 0 .136c.411.622 1.241 1.75 2.366 2.717C5.176 11.758 6.527 12.5 8 12.5c1.473 0 2.825-.742 3.955-1.715 1.124-.967 1.954-2.096 2.366-2.717a.12.12 0 0 0 0-.136c-.412-.621-1.242-1.75-2.366-2.717C10.824 4.242 9.473 3.5 8 3.5c-1.473 0-2.825.742-3.955 1.715-1.124.967-1.954 2.096-2.366 2.717ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z';
 // Marks titles this extension set, so only those are removed again
 const OWN_TITLE = 'data-review-order-title';
 const UNLISTED_TITLE = 'Not in the review order';
 
 type Rect = Pick<DOMRect, 'top' | 'bottom' | 'height'>;
+
+/** Whether a tree entry's key is a file's anchor rather than its path. */
+export function isFileAnchor(key: string): boolean {
+  return FILE_ANCHOR.test(key);
+}
 
 /** The file tree on a PR's changes page, if it has one. */
 export function findTree(root: ParentNode): HTMLElement | null {
@@ -84,20 +98,24 @@ export function reviewSteps(files: ReviewFile[]): Map<string, number> {
 
 /**
  * Gives each file a badge with its step in the review order, or a warning if
- * it's missing from it, and highlights the current one. Only writes what changed.
+ * it's missing from it, plus an eye once it's viewed, and highlights the
+ * current one. Only writes what changed.
  */
 export function markTreeEntries(
   entries: Map<string, HTMLElement>,
   steps: Map<string, number>,
   current: ReviewFile | null,
+  isViewed: (key: string) => boolean = () => false,
 ): void {
   for (const [key, entry] of entries) {
     const step = steps.get(key);
     const isCurrent = key === current?.path || key === current?.anchor;
+    const viewed = isViewed(key);
     setAttribute(entry, STEP, step === undefined ? null : String(step));
     setAttribute(entry, UNLISTED, step === undefined ? '' : null);
     setAttribute(entry, CURRENT, isCurrent ? '' : null);
-    setMarker(entry, step === undefined ? '!' : String(step));
+    setAttribute(entry, VIEWED, viewed ? '' : null);
+    setBadges(entry, step === undefined ? '!' : String(step), viewed);
     setUnlistedTitle(entry, step === undefined);
   }
 }
@@ -108,11 +126,12 @@ export function treeEntryFor(entries: Map<string, HTMLElement>, file: ReviewFile
 }
 
 export function clearTreeMarks(root: ParentNode): void {
-  for (const marker of root.querySelectorAll(`[${MARKER}]`)) marker.remove();
-  for (const entry of root.querySelectorAll(`[${STEP}], [${UNLISTED}], [${CURRENT}], [${OWN_TITLE}]`)) {
+  for (const badges of root.querySelectorAll(`[${BADGES}]`)) badges.remove();
+  for (const entry of root.querySelectorAll(`[${STEP}], [${UNLISTED}], [${CURRENT}], [${VIEWED}], [${OWN_TITLE}]`)) {
     entry.removeAttribute(STEP);
     entry.removeAttribute(UNLISTED);
     entry.removeAttribute(CURRENT);
+    entry.removeAttribute(VIEWED);
     if (entry.hasAttribute(OWN_TITLE)) removeOwnTitle(entry);
   }
 }
@@ -124,18 +143,44 @@ function setAttribute(element: Element, name: string, value: string | null) {
 }
 
 /**
- * The badge is an element of its own rather than the entry's ::before/::after,
+ * The badges are elements of their own rather than the entry's ::before/::after,
  * which GitHub uses for its active-file indicator.
  */
-function setMarker(entry: Element, text: string) {
-  let marker = entry.querySelector(`:scope > [${MARKER}]`);
+function setBadges(entry: Element, text: string, viewed: boolean) {
+  const doc = entry.ownerDocument;
+  let badges = entry.querySelector(`:scope > [${BADGES}]`);
+  if (!badges) {
+    badges = doc.createElement('span');
+    badges.setAttribute(BADGES, '');
+    // GitHub's own toggles and tree already tell assistive tech about each file
+    badges.setAttribute('aria-hidden', 'true');
+    entry.append(badges);
+  }
+
+  let marker = badges.querySelector(`:scope > [${MARKER}]`);
   if (!marker) {
-    marker = entry.ownerDocument.createElement('span');
+    marker = doc.createElement('span');
     marker.setAttribute(MARKER, '');
-    marker.setAttribute('aria-hidden', 'true');
-    entry.append(marker);
+    badges.append(marker);
   }
   if (marker.textContent !== text) marker.textContent = text;
+
+  const eye = badges.querySelector(`:scope > [${EYE}]`);
+  if (viewed && !eye) badges.prepend(createEye(doc));
+  else if (!viewed && eye) eye.remove();
+}
+
+function createEye(doc: Document): Element {
+  const eye = doc.createElementNS(SVG_NS, 'svg');
+  eye.setAttribute(EYE, '');
+  eye.setAttribute('viewBox', '0 0 16 16');
+  // Sized here too, so it stays small if the stylesheet is missing
+  eye.setAttribute('width', '14');
+  eye.setAttribute('height', '14');
+  const path = doc.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', EYE_PATH);
+  eye.append(path);
+  return eye;
 }
 
 function setUnlistedTitle(entry: Element, unlisted: boolean) {

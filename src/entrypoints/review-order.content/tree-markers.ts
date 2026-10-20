@@ -1,5 +1,6 @@
 import type { ContentScriptContext } from '#imports';
 import type { ReviewFile } from '@/utils/file-tree';
+import type { ViewedState } from './viewed';
 // ?inline crashes in WXT's content script build, and the CSS needs no processing anyway
 import styles from './tree-markers.css?raw';
 
@@ -9,20 +10,29 @@ export interface TreeMarkers {
   stop(): void;
 }
 
+export interface TreeMarkerOptions {
+  /** Where viewed states come from, so viewed files get an eye. */
+  viewed?: Pick<ViewedState, 'isViewed' | 'watch'>;
+  /** Called whenever the reason the tree can't show the order changes, with null once it can. */
+  onProblem?: (problem: string | null) => void;
+}
+
 export const NONE_IN_TREE = "None of the review order's files are in GitHub's file tree.";
 export const UNREADABLE_TREE = "Couldn't read GitHub's file tree, so it doesn't show the review order.";
 
 /**
- * Shows the review order in GitHub's file tree and keeps it there while GitHub
- * re-renders or lazy-loads the tree. Calls onProblem whenever the reason the
- * tree can't show it changes, with null once it can.
+ * Shows the review order and which files are viewed in GitHub's file tree, and
+ * keeps it there while GitHub re-renders or lazy-loads the tree.
  */
 export function createTreeMarkers(
   ctx: ContentScriptContext,
   files: ReviewFile[],
-  onProblem: (problem: string | null) => void = () => {},
+  { viewed, onProblem = () => {} }: TreeMarkerOptions = {},
 ): TreeMarkers {
   const steps = reviewSteps(files);
+  // Viewed states are keyed by anchor, but the /changes tree keys its files by path, whose hash is the anchor
+  const anchors = new Map(files.map((file) => [file.path, file.anchor]));
+  const hashing = new Set<string>();
   let current: ReviewFile | null = null;
   let tree: HTMLElement | null = null;
   let frame: number | null = null;
@@ -43,12 +53,40 @@ export function createTreeMarkers(
 
     // If none of the order's files are in the tree it was most likely misread, and every file would be flagged
     const matched = files.some((file) => treeEntryFor(entries, file) !== undefined);
-    if (matched) markTreeEntries(entries, steps, current);
+    if (matched) markTreeEntries(entries, steps, current, isViewed);
     else if (marked) clearTreeMarks(document);
     marked = matched;
 
     report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
     return entries;
+  }
+
+  function isViewed(key: string): boolean {
+    const anchor = anchorOf(key);
+    return anchor !== undefined && (viewed?.isViewed(anchor) ?? false);
+  }
+
+  /** The file's anchor, or undefined while its path is still being hashed. */
+  function anchorOf(key: string): string | undefined {
+    if (isFileAnchor(key)) return key;
+    const anchor = anchors.get(key);
+    if (anchor !== undefined || !viewed || hashing.has(key)) return anchor;
+
+    hashing.add(key);
+    void diffAnchorId(key).then((hashed) => {
+      anchors.set(key, hashed);
+      hashing.delete(key);
+      schedule();
+    });
+    return undefined;
+  }
+
+  function schedule() {
+    if (stopped || frame !== null) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      if (!stopped) apply();
+    });
   }
 
   function report(next: string | null) {
@@ -63,13 +101,10 @@ export function createTreeMarkers(
     // Diffs and comments change all the time; only the tree appearing or changing matters
     const known = tree?.isConnected ? tree : null;
     if (known && !records.some((record) => known.contains(record.target))) return;
-
-    frame = requestAnimationFrame(() => {
-      frame = null;
-      if (!stopped) apply();
-    });
+    schedule();
   });
   observer.observe(document.body, { childList: true, subtree: true });
+  const unwatchViewed = viewed?.watch(schedule);
   apply();
 
   const removeInvalidatedListener = ctx.onInvalidated(stop);
@@ -79,6 +114,7 @@ export function createTreeMarkers(
     stopped = true;
     removeInvalidatedListener();
     observer.disconnect();
+    unwatchViewed?.();
     if (frame !== null) cancelAnimationFrame(frame);
     style.remove();
     clearTreeMarks(document);

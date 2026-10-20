@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { anchorId, CHANGES_URL, reviewOrder, servePullRequest } from './github';
+import { anchorId, CHANGES_URL, reviewOrder, servePullRequest, UNLISTED_PATH } from './github';
 
 // The fixture marks the second file as viewed, and only renders a file once it's navigated to
 const [first, second, third] = reviewOrder;
@@ -90,4 +90,27 @@ test('marks the review order in the /changes file tree', async ({ context, page 
   await expect(page.locator('[id="src/unlisted.ts"]')).toHaveAttribute('data-review-order-unlisted', '');
   await expect(page.locator('#src')).not.toHaveAttribute('data-review-order-unlisted');
   await expect(page.locator(`[id="${first!.path}"]`)).toHaveAttribute('data-review-order-current', '');
+});
+
+test('shows which files are viewed in the file tree', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  pr.viewed = new Set([second!.path, UNLISTED_PATH]);
+  await page.goto(CHANGES_URL);
+  const eye = (path: string) => page.locator(`[id="${path}"] [data-review-order-eye]`);
+
+  await expect(eye(second!.path)).toBeVisible();
+  // Files left out of the order get it next to their warning
+  await expect(eye(UNLISTED_PATH)).toBeVisible();
+  await expect(page.locator(`[id="${UNLISTED_PATH}"] [data-review-order-marker]`)).toHaveText('!');
+  await expect(eye(first!.path)).toHaveCount(0);
+  await expect(eye(third!.path)).toHaveCount(0);
+
+  const firstFile = page.locator(`#${anchorId(first!.path)}`);
+  await firstFile.getByRole('button', { name: 'Not Viewed' }).click();
+  await expect(eye(first!.path)).toBeVisible();
+  await firstFile.getByRole('button', { name: 'Viewed' }).click();
+  await expect(eye(first!.path)).toHaveCount(0);
+
+  await panel(page).getByRole('button', { name: 'Close' }).click();
+  await expect(page.locator('[data-review-order-eye], [data-review-order-viewed]')).toHaveCount(0);
 });

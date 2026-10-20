@@ -9,10 +9,23 @@
   padding-right: 28px !important;
 }
 
-[data-review-order-marker] {
+/* And for the eye in front of it */
+[role='treeitem'][data-review-order-viewed] {
+  padding-right: 48px !important;
+}
+
+[data-review-order-badges] {
   position: absolute;
   top: 50%;
   right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+[data-review-order-marker] {
   box-sizing: border-box;
   min-width: 18px;
   height: 18px;
@@ -22,12 +35,17 @@
   color: var(--fgColor-onEmphasis, #ffffff);
   font: 600 11px/18px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
   text-align: center;
-  transform: translateY(-50%);
-  pointer-events: none;
 }
 
-[data-review-order-unlisted] > [data-review-order-marker] {
+[data-review-order-unlisted] > [data-review-order-badges] > [data-review-order-marker] {
   background: var(--bgColor-attention-emphasis, #9a6700);
+}
+
+[data-review-order-eye] {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: var(--fgColor-muted, #59636e);
 }
 
 /* GitHub's selected-file background is more specific, and the current file must stand out */

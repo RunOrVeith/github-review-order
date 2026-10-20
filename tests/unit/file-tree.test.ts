@@ -129,7 +129,8 @@ describe('markTreeEntries', () => {
 });
 
 describe('markTreeEntries badges', () => {
-  const marker = (anchor: string) => entry(anchor).querySelectorAll(':scope > [data-review-order-marker]');
+  const marker = (anchor: string) =>
+    entry(anchor).querySelectorAll(':scope > [data-review-order-badges] > [data-review-order-marker]');
 
   test('adds one badge per file and none to folders', () => {
     const entries = findTreeEntries(document);
@@ -140,7 +141,7 @@ describe('markTreeEntries badges', () => {
     expect(marker(C)[0]?.textContent).toBe('1');
     expect(marker(A)[0]?.textContent).toBe('2');
     expect(marker(B)[0]?.textContent).toBe('!');
-    expect(marker(A)[0]?.getAttribute('aria-hidden')).toBe('true');
+    expect(marker(A)[0]?.parentElement?.getAttribute('aria-hidden')).toBe('true');
     expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(3);
   });
 
@@ -151,6 +152,60 @@ describe('markTreeEntries badges', () => {
 
     expect(marker(A)[0]?.textContent).toBe('2');
     expect(marker(B)[0]?.textContent).toBe('1');
+  });
+});
+
+describe('markTreeEntries eyes', () => {
+  const eye = (anchor: string) => entry(anchor).querySelector('[data-review-order-eye]');
+
+  test('puts an eye in front of the badge of every viewed file, listed or not', () => {
+    const viewed = new Set([A, B]);
+    markTreeEntries(findTreeEntries(document), reviewSteps([A, C].map(file)), null, (key) => viewed.has(key));
+
+    // B isn't in the order, so its badge is the warning
+    for (const anchor of [A, B]) {
+      expect(entry(anchor).hasAttribute('data-review-order-viewed')).toBe(true);
+      expect(eye(anchor)?.nextElementSibling?.hasAttribute('data-review-order-marker')).toBe(true);
+    }
+    expect(eye(B)?.nextElementSibling?.textContent).toBe('!');
+    expect(entry(C).hasAttribute('data-review-order-viewed')).toBe(false);
+    expect(eye(C)).toBeNull();
+  });
+
+  test('takes the eye away again when a file is unticked', () => {
+    const viewed = new Set([A]);
+    const entries = findTreeEntries(document);
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, (key) => viewed.has(key));
+
+    viewed.delete(A);
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, (key) => viewed.has(key));
+
+    expect(eye(A)).toBeNull();
+    expect(entry(A).hasAttribute('data-review-order-viewed')).toBe(false);
+    expect(entry(A).querySelector('[data-review-order-marker]')?.textContent).toBe('1');
+  });
+
+  test('changes nothing when called again with the same states', async () => {
+    const entries = findTreeEntries(document);
+    const isViewed = (key: string) => key === A;
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, isViewed);
+
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => records.push(...batch));
+    observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, isViewed);
+    await Promise.resolve();
+    observer.disconnect();
+
+    expect(records).toEqual([]);
+  });
+
+  test('is removed with the other marks', () => {
+    markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), null, () => true);
+    clearTreeMarks(document);
+
+    expect(document.querySelectorAll('[data-review-order-eye], [data-review-order-badges]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-review-order-viewed]')).toHaveLength(0);
   });
 });
 
