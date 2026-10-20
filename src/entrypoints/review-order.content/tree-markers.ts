@@ -9,15 +9,26 @@ export interface TreeMarkers {
   stop(): void;
 }
 
+export const NONE_IN_TREE = "None of the review order's files are in GitHub's file tree.";
+export const UNREADABLE_TREE = "Couldn't read GitHub's file tree, so it doesn't show the review order.";
+
 /**
  * Shows the review order in GitHub's file tree and keeps it there while GitHub
- * re-renders or lazy-loads the tree.
+ * re-renders or lazy-loads the tree. Calls onProblem whenever the reason the
+ * tree can't show it changes, with null once it can.
  */
-export function createTreeMarkers(ctx: ContentScriptContext, files: ReviewFile[]): TreeMarkers {
+export function createTreeMarkers(
+  ctx: ContentScriptContext,
+  files: ReviewFile[],
+  onProblem: (problem: string | null) => void = () => {},
+): TreeMarkers {
   const steps = reviewSteps(files);
   let current: ReviewFile | null = null;
   let tree: HTMLElement | null = null;
   let frame: number | null = null;
+  // Whether the tree has marks on it, so they're removed once it can't be read anymore
+  let marked = false;
+  let problem: string | null = null;
   // A navigation still in flight when the panel closes must not mark the tree again
   let stopped = false;
 
@@ -29,8 +40,21 @@ export function createTreeMarkers(ctx: ContentScriptContext, files: ReviewFile[]
   function apply(): Map<string, HTMLElement> {
     if (!tree?.isConnected) tree = findTree(document);
     const entries = tree ? findTreeEntries(tree) : new Map<string, HTMLElement>();
-    markTreeEntries(entries, steps, current);
+
+    // If none of the order's files are in the tree it was most likely misread, and every file would be flagged
+    const matched = files.some((file) => treeEntryFor(entries, file) !== undefined);
+    if (matched) markTreeEntries(entries, steps, current);
+    else if (marked) clearTreeMarks(document);
+    marked = matched;
+
+    report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
     return entries;
+  }
+
+  function report(next: string | null) {
+    if (next === problem) return;
+    problem = next;
+    onProblem(problem);
   }
 
   // Only childList changes are observed, so the attributes set by apply() don't re-trigger it

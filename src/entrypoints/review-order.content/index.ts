@@ -1,7 +1,8 @@
 import { mount, unmount } from 'svelte';
-import type { PullRef } from '@/utils/github';
-import type { ReviewItem } from '@/utils/review-order';
+import { RequestError, type PullPage, type PullRef } from '@/utils/github';
+import type { CachedReview } from '@/utils/progress';
 import Panel from './Panel.svelte';
+import { PanelStatus } from './status.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
 import { createViewedState, type ViewedState } from './viewed';
 
@@ -13,6 +14,12 @@ interface Review {
   markers: TreeMarkers;
   viewed: ViewedState;
 }
+
+// Coming back to the tab re-reads the PR at most this often; GitHub's Refresh button always does.
+// The e2e build sets it to 0 so tests don't have to wait.
+const RECHECK_INTERVAL = Number(import.meta.env.WXT_RECHECK_INTERVAL ?? 30_000);
+
+const EMPTY_SECTION = 'The "Review order" section has no numbered list of files.';
 
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
@@ -30,7 +37,10 @@ export default defineContentScript({
     let active: { key: string; pr: PullRef } | null = null;
     // What the panel currently shows, so re-checks only rebuild it when something changed
     let shownFingerprint: string | null = null;
+    // What the current panel shows besides the steps
+    let status: PanelStatus | undefined;
     let recheck: Promise<void> | null = null;
+    let lastRead = 0;
 
     function hide() {
       ui?.remove();
@@ -38,6 +48,7 @@ export default defineContentScript({
       markers?.stop();
       markers = undefined;
       shownFingerprint = null;
+      status = undefined;
     }
 
     async function update(url: string) {
@@ -57,36 +68,57 @@ export default defineContentScript({
       // Reading the description takes a full page request, so show the last known order meanwhile
       if (!ui) {
         const cached = await loadCachedReview(pr);
-        if (cached && active?.key === key) await mountPanel(pr, key, cached.fingerprint, cached.items);
+        if (cached && active?.key === key) await mountPanel(pr, key, cached);
       }
 
-      const page = await fetchPullPage(pr);
-      const items = page.description && parseReviewOrder(page.description);
+      lastRead = Date.now();
+      let page: PullPage;
+      try {
+        page = await fetchPullPage(pr);
+      } catch (error) {
+        // Whatever is shown stays; a failed request says nothing about the PR's review order
+        if (active?.key === key && status) status.reviewProblem = loadFailure(error);
+        return;
+      }
+      const latest = latestReviewOrder(page.posts);
+      const fingerprint = latest && (await reviewFingerprint(page.headSha, latest.items));
       // The user may have left the changes tab while this was loading
       if (active?.key !== key) return;
+      if (!latest || !fingerprint) {
+        void forgetReview(pr);
+        return hide();
+      }
 
-      const fingerprint = items ? reviewFingerprint(page.headSha, items) : null;
-      void saveCachedReview(pr, items && fingerprint ? { fingerprint, items } : null);
-      if (!items || !fingerprint) return hide();
-      if (fingerprint === shownFingerprint) return;
+      const { kind, author, anchor } = latest.post;
+      const review = { fingerprint, items: latest.items, source: { kind, author, anchor } };
+      if (review.items.length > 0) void saveCachedReview(pr, review);
+      else void forgetReview(pr);
+      // Someone may have posted the same order again, which keeps the step but not where it's from
+      if (fingerprint === shownFingerprint) {
+        if (status) showStatus(status, pr, review);
+        return;
+      }
 
       // GitHub unticks files changed by new commits, but the page's embedded states don't update
       if (rechecking) await viewed?.refresh(pr);
-      await mountPanel(pr, key, fingerprint, items);
+      await mountPanel(pr, key, review);
     }
 
-    async function mountPanel(pr: PullRef, key: string, fingerprint: string, items: ReviewItem[]) {
+    async function mountPanel(pr: PullRef, key: string, review: CachedReview) {
+      const { fingerprint, items } = review;
       const [initialIndex, initialPosition, initialSkipViewed, anchors] = await Promise.all([
         loadProgress(pr, fingerprint),
-        panelPosition.getValue(),
+        loadPanelPosition(),
         skipViewed.getValue(),
         Promise.all(items.map((item) => diffAnchorId(item.path))),
       ]);
       const viewedState = viewed;
       if (active?.key !== key || !viewedState) return;
 
+      const newStatus = new PanelStatus();
+      showStatus(newStatus, pr, review);
       // Assigned right before mounting; the panel navigates to its first step as soon as it mounts
-      let review: Review;
+      let steps: Review;
       const newUi = await createShadowRootUi(ctx, {
         name: 'review-order-panel',
         position: 'inline',
@@ -100,9 +132,10 @@ export default defineContentScript({
               initialIndex,
               initialPosition,
               initialSkipViewed,
+              status: newStatus,
               isViewed: (index) => viewedState.isViewed(anchors[index]!),
               watchViewed: (onChange) => viewedState.watch(onChange),
-              onNavigate: (index) => navigate(review, index),
+              onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
               onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
               onClose: hide,
@@ -117,17 +150,23 @@ export default defineContentScript({
 
       hide();
       shownFingerprint = fingerprint;
-      const files = items.map((item, index) => ({ path: item.path, anchor: anchors[index]! }));
-      review = { pr, fingerprint, anchors, markers: createTreeMarkers(ctx, files), viewed: viewedState };
-      markers = review.markers;
+      status = newStatus;
+      // A section without files has no steps to navigate or mark
+      if (items.length > 0) {
+        const files = items.map((item, index) => ({ path: item.path, anchor: anchors[index]! }));
+        markers = createTreeMarkers(ctx, files, (problem) => (newStatus.treeProblem = problem));
+        steps = { pr, fingerprint, anchors, markers, viewed: viewedState };
+      }
       ui = newUi;
       ui.mount();
     }
 
     /** Picks up new pushes and description edits while the changes tab stays open. */
-    function recheckOpenPanel() {
+    function recheckOpenPanel(always = false) {
       // A closed panel stays closed until the changes tab is opened again
       if (!active || !ui || recheck) return;
+      // Each check downloads the whole conversation page, which is large on busy PRs
+      if (!always && Date.now() - lastRead < RECHECK_INTERVAL) return;
       recheck = show(active.pr, active.key, true).finally(() => (recheck = null));
     }
 
@@ -139,18 +178,29 @@ export default defineContentScript({
       document,
       'click',
       (event) => {
-        if (isRefreshControl(event.target)) recheckOpenPanel();
+        if (isRefreshControl(event.target)) recheckOpenPanel(true);
       },
       { capture: true },
     );
     // Coming back to the tab, e.g. after pushing from a terminal
-    ctx.addEventListener(window, 'focus', recheckOpenPanel);
+    ctx.addEventListener(window, 'focus', () => recheckOpenPanel());
     ctx.addEventListener(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') recheckOpenPanel();
     });
     await update(location.href);
   },
 });
+
+/** Shows where the order is from, and clears a failed request's problem now that it loaded. */
+function showStatus(status: PanelStatus, pr: PullRef, review: CachedReview) {
+  status.source = describePost(pr, review.source);
+  status.reviewProblem = review.items.length > 0 ? null : EMPTY_SECTION;
+}
+
+function loadFailure(error: unknown): string {
+  const reason = error instanceof RequestError ? error.message : "GitHub couldn't be reached";
+  return `Couldn't load the latest review order (${reason}), so this may be out of date.`;
+}
 
 async function navigate(review: Review, index: number) {
   const id = review.anchors[index]!;

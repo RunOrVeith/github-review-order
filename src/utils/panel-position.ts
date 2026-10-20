@@ -26,6 +26,27 @@ export const DEFAULT_PANEL_POSITION: PanelPosition = {
 // Shared by all PRs so the panel stays wherever it was last put
 export const panelPosition = storage.defineItem<PanelPosition>('local:panelAnchor');
 
+/** Where the panel was last put, if anywhere. A position that can't be read, e.g. from an older version, is removed. */
+export async function loadPanelPosition(): Promise<PanelPosition | null> {
+  const saved: unknown = await panelPosition.getValue();
+  if (saved === null || isPanelPosition(saved)) return saved;
+
+  await panelPosition.removeValue();
+  return null;
+}
+
+export function isPanelPosition(value: unknown): value is PanelPosition {
+  if (typeof value !== 'object' || value === null) return false;
+  const { horizontal, vertical } = value as Record<string, unknown>;
+  return isEdgeOffset(horizontal, ['left', 'right']) && isEdgeOffset(vertical, ['top', 'bottom']);
+}
+
+function isEdgeOffset(value: unknown, edges: string[]): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const { edge, offset } = value as Record<string, unknown>;
+  return typeof edge === 'string' && edges.includes(edge) && typeof offset === 'number' && Number.isFinite(offset);
+}
+
 /** Moves a panel of the given size so it's fully inside the viewport. */
 export function clampToViewport(point: Point, size: Size, viewport: Size): Point {
   return {

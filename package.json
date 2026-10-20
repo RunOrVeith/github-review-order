@@ -24,7 +24,7 @@
     "compile": "svelte-check --tsgo --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "wxt build && playwright test"
+    "e2e": "WXT_RECHECK_INTERVAL=0 wxt build --mode e2e && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

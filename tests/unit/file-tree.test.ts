@@ -3,6 +3,7 @@ import {
   clearTreeMarks,
   findTree,
   findTreeEntries,
+  hasUnreadableTree,
   markTreeEntries,
   reviewSteps,
   scrollTopToReveal,
@@ -249,5 +250,23 @@ describe('the /changes tree', () => {
     expect(document.getElementById('src/a.ts')!.hasAttribute('data-review-order-current')).toBe(true);
     expect(document.getElementById('README.md')!.hasAttribute('data-review-order-unlisted')).toBe(true);
     expect(document.getElementById('src')!.hasAttribute('data-review-order-unlisted')).toBe(false);
+  });
+});
+
+describe('hasUnreadableTree', () => {
+  test('is false for a tree it can read, and for a page without one', () => {
+    expect(hasUnreadableTree(document)).toBe(false);
+    document.body.innerHTML = '<main></main>';
+    expect(hasUnreadableTree(document)).toBe(false);
+  });
+
+  test('is false while only folders are rendered', () => {
+    document.body.innerHTML = '<ul role="tree"><li role="treeitem" aria-expanded="false">src</li></ul>';
+    expect(hasUnreadableTree(document)).toBe(false);
+  });
+
+  test('is true when files have nothing that identifies them', () => {
+    document.body.innerHTML = '<ul role="tree"><li role="treeitem" id="_r_1_">a.ts</li></ul>';
+    expect(hasUnreadableTree(document)).toBe(true);
   });
 });
