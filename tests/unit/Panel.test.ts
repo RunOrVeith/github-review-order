@@ -253,3 +253,15 @@ describe('skip viewed', () => {
     expect(button('Next')).toBeEnabled();
   });
 });
+
+test('the skip viewed toggle in the header does not start a drag', async () => {
+  const { onMove } = renderDraggable();
+  const toggle = screen.getByRole('checkbox', { name: 'Skip viewed' });
+
+  await fireEvent.pointerDown(toggle, { button: 0, clientX: 10, clientY: 10 });
+  await fireEvent.pointerMove(toggle, { buttons: 1, clientX: 110, clientY: 60 });
+  await fireEvent.pointerUp(toggle);
+
+  expect(onMove).not.toHaveBeenCalled();
+  expect(screen.getByRole('group', { name: 'Drag to move' })).toContainElement(toggle);
+});

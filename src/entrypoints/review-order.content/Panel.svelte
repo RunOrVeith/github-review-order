@@ -90,7 +90,8 @@
   }
 
   function startDrag(event: PointerEvent) {
-    if (event.button !== 0 || (event.target as Element).closest('button')) return;
+    // The header is the drag handle, but its controls stay clickable
+    if (event.button !== 0 || (event.target as Element).closest('button, label')) return;
 
     const rect = panel.getBoundingClientRect();
     drag = {
@@ -169,7 +170,13 @@
     onpointercancel={endDrag}
     onlostpointercapture={endDrag}
   >
-    <span class="step"><span class="grip" aria-hidden="true">⠿</span> {index + 1} / {items.length}</span>
+    <span class="status">
+      <span class="step"><span class="grip" aria-hidden="true">⠿</span> {index + 1} / {items.length}</span>
+      <label class="skip-viewed">
+        <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
+        Skip viewed
+      </label>
+    </span>
     <button class="close" aria-label="Close" onclick={onClose}>✕</button>
   </header>
 
@@ -198,11 +205,6 @@
       Next
     </button>
   </nav>
-
-  <label class="skip-viewed">
-    <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
-    Skip viewed
-  </label>
 </aside>
 
 <style>
@@ -313,15 +315,19 @@
     color: var(--muted);
   }
 
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .skip-viewed {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 8px;
+    gap: 4px;
     color: var(--muted);
     font-size: 12px;
     cursor: pointer;
-    user-select: none;
   }
 
   .skip-viewed input {
