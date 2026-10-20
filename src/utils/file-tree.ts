@@ -1,68 +1,81 @@
 // Everything that depends on GitHub's file tree markup lives here
-const TREE_ENTRY_SELECTOR = '[role="tree"] [role="treeitem"]';
+const TREE_SELECTOR = '[role="tree"]';
 const TREE_ITEM_SELECTOR = '[role="treeitem"]';
-const DIFF_LINK_SELECTOR = 'a[href*="#diff-"]';
+const ENTRY_WITH_ID_SELECTOR = '[role="tree"] [role="treeitem"][id*="diff-"]';
+const DIFF_LINK_SELECTOR = '[role="tree"] a[href*="#diff-"]';
 const ANCHOR = /diff-[0-9a-f]{64}/;
 
 const STEP = 'data-review-order-step';
 const UNLISTED = 'data-review-order-unlisted';
 const CURRENT = 'data-review-order-current';
+const MARKER = 'data-review-order-marker';
 // Marks titles this extension set, so only those are removed again
 const OWN_TITLE = 'data-review-order-title';
 const UNLISTED_TITLE = 'Not in the review order';
 
 type Rect = Pick<DOMRect, 'top' | 'bottom' | 'height'>;
 
+/** The file tree on a PR's changes page, if it has one. */
+export function findTree(root: ParentNode): HTMLElement | null {
+  return (
+    Array.from(root.querySelectorAll<HTMLElement>(TREE_SELECTOR)).find((tree) =>
+      tree.querySelector(`${TREE_ITEM_SELECTOR}[id*="diff-"], a[href*="#diff-"]`),
+    ) ?? null
+  );
+}
+
 /** Maps each file's anchor (`diff-<sha256 of its path>`) to its entry in GitHub's file tree. */
 export function findTreeEntries(root: ParentNode): Map<string, HTMLElement> {
   const entries = new Map<string, HTMLElement>();
-  for (const entry of root.querySelectorAll<HTMLElement>(TREE_ENTRY_SELECTOR)) {
-    const anchor = anchorOf(entry);
-    if (anchor && !entries.has(anchor)) entries.set(anchor, entry);
+  const add = (entry: HTMLElement | null, anchor: string | undefined) => {
+    if (entry && anchor && !entries.has(anchor)) entries.set(anchor, entry);
+  };
+
+  for (const entry of root.querySelectorAll<HTMLElement>(ENTRY_WITH_ID_SELECTOR)) {
+    add(entry, ANCHOR.exec(entry.id)?.[0]);
+  }
+  // Each link belongs to its closest entry, so folders never count as files
+  for (const link of root.querySelectorAll(DIFF_LINK_SELECTOR)) {
+    add(link.closest<HTMLElement>(TREE_ITEM_SELECTOR), ANCHOR.exec(link.getAttribute('href') ?? '')?.[0]);
   }
   return entries;
 }
 
-function anchorOf(entry: HTMLElement): string | null {
-  const own = ANCHOR.exec(entry.id)?.[0];
-  if (own) return own;
-
-  // Folders contain their files' links too, so only links that belong to this entry count
-  const link = Array.from(entry.querySelectorAll(DIFF_LINK_SELECTOR)).find(
-    (a) => a.closest(TREE_ITEM_SELECTOR) === entry,
-  );
-  return ANCHOR.exec(link?.getAttribute('href') ?? '')?.[0] ?? null;
+/** Each anchor's step in the review order, counting from 1. A file listed twice keeps its first step. */
+export function reviewSteps(order: string[]): Map<string, number> {
+  const steps = new Map<string, number>();
+  order.forEach((anchor, index) => {
+    if (!steps.has(anchor)) steps.set(anchor, index + 1);
+  });
+  return steps;
 }
 
 /**
- * Marks each file with its step in the review order, or as missing from it, and
- * highlights the current one. Only writes attributes that changed.
+ * Gives each file a badge with its step in the review order, or a warning if
+ * it's missing from it, and highlights the current one. Only writes what changed.
  */
 export function markTreeEntries(
   entries: Map<string, HTMLElement>,
-  order: string[],
+  steps: Map<string, number>,
   currentId: string | null,
 ): void {
-  const steps = new Map<string, number>();
-  order.forEach((id, index) => {
-    if (!steps.has(id)) steps.set(id, index + 1);
-  });
-
   for (const [id, entry] of entries) {
     const step = steps.get(id);
     setAttribute(entry, STEP, step === undefined ? null : String(step));
     setAttribute(entry, UNLISTED, step === undefined ? '' : null);
     setAttribute(entry, CURRENT, id === currentId ? '' : null);
+    setMarker(entry, step === undefined ? '!' : String(step));
     setUnlistedTitle(entry, step === undefined);
   }
 }
 
 export function clearTreeMarks(root: ParentNode): void {
+  for (const marker of root.querySelectorAll(`[${MARKER}]`)) marker.remove();
   for (const entry of root.querySelectorAll(`[${STEP}], [${UNLISTED}], [${CURRENT}], [${OWN_TITLE}]`)) {
     entry.removeAttribute(STEP);
     entry.removeAttribute(UNLISTED);
     entry.removeAttribute(CURRENT);
-    setUnlistedTitle(entry, false);
+    if (entry.hasAttribute(OWN_TITLE)) removeOwnTitle(entry);
   }
 }
 
@@ -72,15 +85,35 @@ function setAttribute(element: Element, name: string, value: string | null) {
   else element.setAttribute(name, value);
 }
 
+/**
+ * The badge is an element of its own rather than the entry's ::before/::after,
+ * which GitHub uses for its active-file indicator.
+ */
+function setMarker(entry: Element, text: string) {
+  let marker = entry.querySelector(`:scope > [${MARKER}]`);
+  if (!marker) {
+    marker = entry.ownerDocument.createElement('span');
+    marker.setAttribute(MARKER, '');
+    marker.setAttribute('aria-hidden', 'true');
+    entry.append(marker);
+  }
+  if (marker.textContent !== text) marker.textContent = text;
+}
+
 function setUnlistedTitle(entry: Element, unlisted: boolean) {
   const ours = entry.hasAttribute(OWN_TITLE);
   if (unlisted && !ours && !entry.hasAttribute('title')) {
     entry.setAttribute('title', UNLISTED_TITLE);
     entry.setAttribute(OWN_TITLE, '');
   } else if (!unlisted && ours) {
-    entry.removeAttribute('title');
-    entry.removeAttribute(OWN_TITLE);
+    removeOwnTitle(entry);
   }
+}
+
+function removeOwnTitle(entry: Element) {
+  // GitHub may have replaced the title since; that one stays
+  if (entry.getAttribute('title') === UNLISTED_TITLE) entry.removeAttribute('title');
+  entry.removeAttribute(OWN_TITLE);
 }
 
 /** The scrollTop that centres the item in its container, or null if it's already fully visible. */

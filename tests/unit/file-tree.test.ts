@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { clearTreeMarks, findTreeEntries, markTreeEntries, scrollTopToReveal } from '@/utils/file-tree';
+import {
+  clearTreeMarks,
+  findTree,
+  findTreeEntries,
+  markTreeEntries,
+  reviewSteps,
+  scrollTopToReveal,
+} from '@/utils/file-tree';
 
 const A = `diff-${'a'.repeat(64)}`;
 const B = `diff-${'b'.repeat(64)}`;
@@ -62,6 +69,10 @@ describe('findTreeEntries', () => {
     expect(entry(C).querySelector('a')?.textContent).toBe('README.md');
   });
 
+  test('finds the same entries when given the tree itself', () => {
+    expect([...findTreeEntries(findTree(document)!).keys()]).toEqual([A, B, C]);
+  });
+
   test('ignores lists outside the file tree', () => {
     document.body.innerHTML = `<ul><li role="treeitem" id="file-tree-item-${A}"></li></ul>`;
     expect(findTreeEntries(document).size).toBe(0);
@@ -70,7 +81,7 @@ describe('findTreeEntries', () => {
 
 describe('markTreeEntries', () => {
   test('numbers files in the order, warns about the rest and marks the current one', () => {
-    markTreeEntries(findTreeEntries(document), [C, A], A);
+    markTreeEntries(findTreeEntries(document), reviewSteps([C, A]), A);
 
     expect(entry(C).dataset.reviewOrderStep).toBe('1');
     expect(entry(A).dataset.reviewOrderStep).toBe('2');
@@ -84,15 +95,15 @@ describe('markTreeEntries', () => {
 
   test('moves the current marker', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, [A, B, C], A);
-    markTreeEntries(entries, [A, B, C], B);
+    markTreeEntries(entries, reviewSteps([A, B, C]), A);
+    markTreeEntries(entries, reviewSteps([A, B, C]), B);
 
     expect(entry(A).hasAttribute('data-review-order-current')).toBe(false);
     expect(entry(B).hasAttribute('data-review-order-current')).toBe(true);
   });
 
   test('explains the warning without replacing titles GitHub set', () => {
-    markTreeEntries(findTreeEntries(document), [], null);
+    markTreeEntries(findTreeEntries(document), reviewSteps([]), null);
 
     expect(entry(A).title).toBe('Not in the review order');
     expect(entry(B).title).toBe('GitHub tooltip');
@@ -100,12 +111,12 @@ describe('markTreeEntries', () => {
 
   test('changes nothing when called again with the same state', async () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, [C, A], A);
+    markTreeEntries(entries, reviewSteps([C, A]), A);
 
     const records: MutationRecord[] = [];
     const observer = new MutationObserver((batch) => records.push(...batch));
     observer.observe(document.body, { attributes: true, childList: true, subtree: true });
-    markTreeEntries(entries, [C, A], A);
+    markTreeEntries(entries, reviewSteps([C, A]), A);
     await Promise.resolve();
     observer.disconnect();
 
@@ -113,9 +124,41 @@ describe('markTreeEntries', () => {
   });
 });
 
+describe('markTreeEntries badges', () => {
+  const marker = (anchor: string) => entry(anchor).querySelectorAll(':scope > [data-review-order-marker]');
+
+  test('adds one badge per file and none to folders', () => {
+    const entries = findTreeEntries(document);
+    markTreeEntries(entries, reviewSteps([C, A]), A);
+    markTreeEntries(entries, reviewSteps([C, A]), C);
+
+    expect(marker(C)).toHaveLength(1);
+    expect(marker(C)[0]?.textContent).toBe('1');
+    expect(marker(A)[0]?.textContent).toBe('2');
+    expect(marker(B)[0]?.textContent).toBe('!');
+    expect(marker(A)[0]?.getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(3);
+  });
+
+  test('updates the badge when the order changes', () => {
+    const entries = findTreeEntries(document);
+    markTreeEntries(entries, reviewSteps([A]), null);
+    markTreeEntries(entries, reviewSteps([B, A]), null);
+
+    expect(marker(A)[0]?.textContent).toBe('2');
+    expect(marker(B)[0]?.textContent).toBe('1');
+  });
+});
+
+describe('reviewSteps', () => {
+  test('keeps the first step of a file listed twice', () => {
+    expect(reviewSteps([A, B, A])).toEqual(new Map([[A, 1], [B, 2]]));
+  });
+});
+
 describe('clearTreeMarks', () => {
   test('removes every marker and only the titles it added', () => {
-    markTreeEntries(findTreeEntries(document), [A], A);
+    markTreeEntries(findTreeEntries(document), reviewSteps([A]), A);
     clearTreeMarks(document);
 
     for (const anchor of [A, B, C]) {
@@ -124,6 +167,15 @@ describe('clearTreeMarks', () => {
     }
     expect(entry(C).hasAttribute('title')).toBe(false);
     expect(entry(B).title).toBe('GitHub tooltip');
+    expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(0);
+  });
+
+  test('keeps a title GitHub set after ours', () => {
+    markTreeEntries(findTreeEntries(document), reviewSteps([]), null);
+    entry(A).title = 'src/a.ts';
+    clearTreeMarks(document);
+
+    expect(entry(A).title).toBe('src/a.ts');
   });
 });
 

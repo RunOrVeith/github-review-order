@@ -1,5 +1,6 @@
 import { mount, unmount } from 'svelte';
 import type { PullRef } from '@/utils/github';
+import type { ReviewItem } from '@/utils/review-order';
 import Panel from './Panel.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
 
@@ -14,6 +15,8 @@ interface Review {
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
   matches: ['https://github.com/*'],
+  // Starts the description request as soon as the HTML is parsed instead of after the page loaded
+  runAt: 'document_end',
   cssInjectionMode: 'ui',
 
   async main(ctx) {
@@ -45,15 +48,24 @@ export default defineContentScript({
 
     /** Shows the panel for the PR's current review order, or rebuilds it if that changed. */
     async function show(pr: PullRef, key: string) {
+      // Reading the description takes a full page request, so show the last known order meanwhile
+      if (!ui) {
+        const cached = await loadCachedReview(pr);
+        if (cached && active?.key === key) await mountPanel(pr, key, cached.fingerprint, cached.items);
+      }
+
       const page = await fetchPullPage(pr);
       const items = page.description && parseReviewOrder(page.description);
       // The user may have left the changes tab while this was loading
       if (active?.key !== key) return;
-      if (!items) return hide();
 
-      const fingerprint = reviewFingerprint(page.headSha, items);
-      if (fingerprint === shownFingerprint) return;
+      const fingerprint = items ? reviewFingerprint(page.headSha, items) : null;
+      void saveCachedReview(pr, items && fingerprint ? { fingerprint, items } : null);
+      if (!items || !fingerprint) return hide();
+      if (fingerprint !== shownFingerprint) await mountPanel(pr, key, fingerprint, items);
+    }
 
+    async function mountPanel(pr: PullRef, key: string, fingerprint: string, items: ReviewItem[]) {
       const [initialIndex, initialPosition, anchors] = await Promise.all([
         loadProgress(pr, fingerprint),
         panelPosition.getValue(),
@@ -61,12 +73,9 @@ export default defineContentScript({
       ]);
       if (active?.key !== key) return;
 
-      hide();
-      shownFingerprint = fingerprint;
-      // Created before the panel, which navigates to its first step as soon as it mounts
-      const review: Review = { pr, fingerprint, anchors, markers: createTreeMarkers(ctx, anchors) };
-      markers = review.markers;
-      ui = await createShadowRootUi(ctx, {
+      // Assigned right before mounting; the panel navigates to its first step as soon as it mounts
+      let review: Review;
+      const newUi = await createShadowRootUi(ctx, {
         name: 'review-order-panel',
         position: 'inline',
         anchor: 'body',
@@ -87,6 +96,14 @@ export default defineContentScript({
           if (app) void unmount(app);
         },
       });
+      // Nothing is on the page until mount(), so a panel for a tab the user already left is just dropped
+      if (active?.key !== key) return;
+
+      hide();
+      shownFingerprint = fingerprint;
+      review = { pr, fingerprint, anchors, markers: createTreeMarkers(ctx, anchors) };
+      markers = review.markers;
+      ui = newUi;
       ui.mount();
     }
 
@@ -119,13 +136,13 @@ export default defineContentScript({
 });
 
 async function navigate(review: Review, index: number) {
-  await saveProgress(review.pr, review.fingerprint, index);
-
   const id = review.anchors[index]!;
   // Clear the hash first so jumping to the file that's already selected still scrolls
   if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
   location.hash = id;
   review.markers.setCurrent(index);
+  const found = document.getElementById(id) !== null;
 
-  return document.getElementById(id) !== null;
+  await saveProgress(review.pr, review.fingerprint, index);
+  return found;
 }

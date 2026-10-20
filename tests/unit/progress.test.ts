@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { loadProgress, saveProgress } from '@/utils/progress';
+import { loadCachedReview, loadProgress, saveCachedReview, saveProgress } from '@/utils/progress';
 
 const pr = { owner: 'acme', repo: 'repo', number: 12, isChangesTab: true };
 
@@ -25,4 +25,15 @@ test('resets when the fingerprint changes', async () => {
 test('keeps progress separate per PR', async () => {
   await saveProgress(pr, 'v1', 2);
   expect(await loadProgress({ ...pr, number: 13 }, 'v1')).toBe(0);
+});
+
+test('caches the last review order per PR until it is cleared', async () => {
+  const review = { fingerprint: 'v1', items: [{ path: 'src/a.ts', description: 'first' }] };
+  await saveCachedReview(pr, review);
+
+  expect(await loadCachedReview(pr)).toEqual(review);
+  expect(await loadCachedReview({ ...pr, number: 13 })).toBeNull();
+
+  await saveCachedReview(pr, null);
+  expect(await loadCachedReview(pr)).toBeNull();
 });

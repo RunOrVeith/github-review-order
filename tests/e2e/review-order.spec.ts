@@ -1,6 +1,14 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { anchorId, CONVERSATION_URL, FILES_URL, reviewOrder, servePullRequest, UNLISTED_PATH } from './github';
+import {
+  anchorId,
+  CONVERSATION_URL,
+  FILES_URL,
+  LONG_PATH,
+  reviewOrder,
+  servePullRequest,
+  UNLISTED_PATH,
+} from './github';
 
 const [first, second] = reviewOrder;
 
@@ -131,6 +139,44 @@ test('keeps the current file visible in the tree on every step', async ({ contex
   await page.locator('#sidebar').evaluate((sidebar) => (sidebar.scrollTop = 0));
   await panel.getByRole('button', { name: 'Reset current' }).click();
   await expect.poll(() => isVisibleInSidebar(treeEntry(page, last.path))).toBe(true);
+});
+
+test("keeps both GitHub's active-file indicator and the step badge", async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const active = treeEntry(page, first!.path);
+  const badge = active.locator('[data-review-order-marker]');
+
+  await expect(badge).toHaveText('1');
+  await expect(badge).toBeVisible();
+  const githubIndicator = await active.evaluate((element) => {
+    const style = getComputedStyle(element, '::after');
+    return { content: style.content, width: style.width };
+  });
+  expect(githubIndicator).toEqual({ content: '""', width: '4px' });
+});
+
+test('truncates long file names before their badge', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const entry = treeEntry(page, LONG_PATH);
+  await expect(entry.locator('[data-review-order-marker]')).toHaveText('!');
+
+  const name = (await entry.locator('a').boundingBox())!;
+  const badge = (await entry.locator('[data-review-order-marker]').boundingBox())!;
+  expect(name.x + name.width).toBeLessThanOrEqual(badge.x);
+});
+
+test('shows the last known order right away while the description loads', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  await expect(panel.getByText('1 / 3')).toBeVisible();
+
+  pr.conversationDelay = 3000;
+  await page.reload();
+  await expect(panel.getByText('1 / 3')).toBeVisible({ timeout: 1000 });
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1', { timeout: 1000 });
 });
 
 test('marks the tree again after GitHub re-renders it', async ({ context, page }) => {
