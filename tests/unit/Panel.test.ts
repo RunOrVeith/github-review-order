@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { tick } from 'svelte';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import Panel from '@/entrypoints/review-order.content/Panel.svelte';
 
 // jsdom does no layout, so give the viewport a size
@@ -158,4 +159,97 @@ test('clicking the close button does not start a drag', async () => {
   await fireEvent.pointerUp(close);
 
   expect(onMove).not.toHaveBeenCalled();
+});
+
+describe('skip viewed', () => {
+  const files = [
+    { path: 'src/a.ts', description: 'first' },
+    { path: 'src/b.ts', description: 'second' },
+    { path: 'src/c.ts', description: 'third' },
+    { path: 'src/d.ts', description: 'fourth' },
+  ];
+
+  function renderSkipping({ viewed = new Set<number>(), initialIndex = 0, initialSkipViewed = true } = {}) {
+    let notify = () => {};
+    const onNavigate = vi.fn(() => true);
+    const onSkipViewedChange = vi.fn();
+    render(Panel, {
+      items: files,
+      initialIndex,
+      initialSkipViewed,
+      isViewed: (index: number) => viewed.has(index),
+      watchViewed: (onChange: () => void) => {
+        notify = onChange;
+        return () => {};
+      },
+      onNavigate,
+      onSkipViewedChange,
+      onClose: () => {},
+    });
+    return { onNavigate, onSkipViewedChange, notify: () => notify(), user: userEvent.setup() };
+  }
+
+  const button = (name: string) => screen.getByRole('button', { name });
+
+  test('is on by default', () => {
+    render(Panel, { items: files, initialIndex: 0, onNavigate: () => true, onClose: () => {} });
+    expect(screen.getByRole('checkbox', { name: 'Skip viewed' })).toBeChecked();
+  });
+
+  test('Next and Previous jump over viewed files', async () => {
+    const { onNavigate, user } = renderSkipping({ viewed: new Set([1, 2]) });
+
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(3);
+    expect(screen.getByText('4 / 4')).toBeInTheDocument();
+
+    await user.click(button('Previous'));
+    expect(onNavigate).toHaveBeenLastCalledWith(0);
+  });
+
+  test('disables a button when only viewed files are left in its direction', () => {
+    renderSkipping({ viewed: new Set([2, 3]), initialIndex: 1 });
+
+    expect(button('Next')).toBeDisabled();
+    expect(button('Next')).toHaveAttribute('title', 'All files after this one are viewed');
+    expect(button('Previous')).toBeEnabled();
+    expect(button('Previous')).not.toHaveAttribute('title');
+  });
+
+  test('Reset current stays on a viewed file', async () => {
+    const { onNavigate, user } = renderSkipping({ viewed: new Set([1]), initialIndex: 1 });
+
+    await user.click(button('Reset current'));
+    expect(onNavigate).toHaveBeenLastCalledWith(1);
+  });
+
+  test('turning it off steps through viewed files again', async () => {
+    const { onNavigate, onSkipViewedChange, user } = renderSkipping({ viewed: new Set([1, 2]) });
+
+    await user.click(screen.getByRole('checkbox', { name: 'Skip viewed' }));
+    expect(onSkipViewedChange).toHaveBeenCalledWith(false);
+
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(1);
+  });
+
+  test('starts off when it was turned off before', async () => {
+    const { onNavigate, user } = renderSkipping({ viewed: new Set([1]), initialSkipViewed: false });
+
+    expect(screen.getByRole('checkbox', { name: 'Skip viewed' })).not.toBeChecked();
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(1);
+  });
+
+  test('follows files being unticked on the page', async () => {
+    const viewed = new Set([2, 3]);
+    const { notify } = renderSkipping({ viewed, initialIndex: 1 });
+    expect(button('Next')).toBeDisabled();
+
+    viewed.delete(3);
+    notify();
+    await tick();
+
+    expect(button('Next')).toBeEnabled();
+  });
 });

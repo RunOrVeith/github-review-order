@@ -20,7 +20,7 @@ let markers: TreeMarkers;
 
 beforeEach(async () => {
   document.body.innerHTML = `<nav><ul role="tree">${treeHtml()}</ul></nav><main></main>`;
-  markers = createTreeMarkers(ctx, [A]);
+  markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }]);
   // Let the pass triggered by the badges it just added run
   await nextFrame();
 });

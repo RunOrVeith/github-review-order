@@ -9,6 +9,7 @@
     type Point,
     type Size,
   } from '@/utils/panel-position';
+  import { findStep } from '@/utils/navigation';
   import type { ReviewItem } from '@/utils/review-order';
 
   interface Props {
@@ -16,21 +17,52 @@
     initialIndex: number;
     /** Where the user last dragged the panel; null keeps it in the bottom-right corner. */
     initialPosition?: PanelPosition | null;
+    initialSkipViewed?: boolean;
+    /** Whether a step's file is ticked as viewed on the page. */
+    isViewed?: (index: number) => boolean;
+    /** Calls back whenever files get ticked or unticked; returns a function that stops it. */
+    watchViewed?: (onChange: () => void) => () => void;
     /** Scrolls to the item and resolves to whether its file was found on the page. */
     onNavigate: (index: number) => Promise<boolean> | boolean;
     onMove?: (position: PanelPosition) => void;
+    onSkipViewedChange?: (skip: boolean) => void;
     onClose: () => void;
   }
 
-  let { items, initialIndex, initialPosition = null, onNavigate, onMove, onClose }: Props = $props();
+  let {
+    items,
+    initialIndex,
+    initialPosition = null,
+    initialSkipViewed = true,
+    isViewed = () => false,
+    watchViewed,
+    onNavigate,
+    onMove,
+    onSkipViewedChange,
+    onClose,
+  }: Props = $props();
 
-  // The panel owns the current step and position from here on; the initial props only seed them
+  // The panel owns the current step, position and toggle from here on; the initial props only seed them
   // svelte-ignore state_referenced_locally
   let index = $state(initialIndex);
   // svelte-ignore state_referenced_locally
   let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
+  // svelte-ignore state_referenced_locally
+  let skipViewed = $state(initialSkipViewed);
   let missing = $state(false);
   const item = $derived(items[index]!);
+
+  // Viewed states live on GitHub's page, so changes there arrive through watchViewed
+  let viewedVersion = $state(0);
+  const skip = (step: number) => skipViewed && isViewed(step);
+  const previous = $derived.by(() => {
+    void viewedVersion;
+    return findStep(index, -1, items.length, skip);
+  });
+  const next = $derived.by(() => {
+    void viewedVersion;
+    return findStep(index, 1, items.length, skip);
+  });
 
   let panel: HTMLElement;
   let size = $state<Size>({ width: 0, height: 0 });
@@ -93,13 +125,27 @@
     onMove?.(position);
   }
 
+  function toggleSkipViewed(event: Event) {
+    skipViewed = (event.currentTarget as HTMLInputElement).checked;
+    onSkipViewedChange?.(skipViewed);
+  }
+
+  /** Explains a disabled button when skipping is what disabled it. */
+  function allViewedHint(target: number | null, end: boolean, direction: string) {
+    return target === null && skipViewed && !end ? `All files ${direction} are viewed` : undefined;
+  }
+
   onMount(() => {
     measureSize();
     // Keeps the panel inside the viewport when its content changes height
     const observer = new ResizeObserver(measureSize);
     observer.observe(panel);
+    const unwatch = watchViewed?.(() => viewedVersion++);
     void go(index);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      unwatch?.();
+    };
   });
 </script>
 
@@ -136,10 +182,27 @@
   {/if}
 
   <nav>
-    <button onclick={() => go(index - 1)} disabled={index === 0}>Previous</button>
+    <button
+      onclick={() => previous !== null && go(previous)}
+      disabled={previous === null}
+      title={allViewedHint(previous, index === 0, 'before this one')}
+    >
+      Previous
+    </button>
     <button onclick={() => go(index)}>Reset current</button>
-    <button onclick={() => go(index + 1)} disabled={index === items.length - 1}>Next</button>
+    <button
+      onclick={() => next !== null && go(next)}
+      disabled={next === null}
+      title={allViewedHint(next, index === items.length - 1, 'after this one')}
+    >
+      Next
+    </button>
   </nav>
+
+  <label class="skip-viewed">
+    <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
+    Skip viewed
+  </label>
 </aside>
 
 <style>
@@ -248,5 +311,21 @@
     border: none;
     background: none;
     color: var(--muted);
+  }
+
+  .skip-viewed {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .skip-viewed input {
+    margin: 0;
+    accent-color: var(--bgColor-accent-emphasis, #0969da);
   }
 </style>

@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 
 export const CONVERSATION_URL = 'https://github.com/acme/repo/pull/1';
 export const FILES_URL = `${CONVERSATION_URL}/files`;
+/** GitHub's newer changes view, which only renders the files near the screen. */
+export const CHANGES_URL = `${CONVERSATION_URL}/changes`;
 
 export const reviewOrder = [
   { path: 'src/core.ts', description: 'start with the core change' },
@@ -22,11 +24,12 @@ export function anchorId(path: string): string {
 
 /**
  * Serves a minimal stand-in for a GitHub PR. Assign `headSha` on the returned
- * object to simulate a new push.
+ * object to simulate a new push, and `viewed` to change which files GitHub
+ * reports as viewed.
  */
 export async function servePullRequest(context: BrowserContext, headSha = 'a'.repeat(40)) {
   // Set conversationDelay to make reading the description slow, like a cold GitHub request
-  const pr = { headSha, conversationDelay: 0 };
+  const pr = { headSha, conversationDelay: 0, viewed: new Set([reviewOrder[1]!.path]) };
 
   await context.route('https://github.com/**', async (route) => {
     const { pathname } = new URL(route.request().url());
@@ -36,6 +39,9 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
     }
     if (pathname === '/acme/repo/pull/1/files') {
       return route.fulfill({ contentType: 'text/html', body: filesPage() });
+    }
+    if (pathname === '/acme/repo/pull/1/changes') {
+      return route.fulfill({ contentType: 'text/html', body: changesPage(pr.viewed) });
     }
     return route.fulfill({ status: 404 });
   });
@@ -108,4 +114,74 @@ function fileTree(): string {
       </li>
       ${entry('README.md')}
     </ul>`;
+}
+
+/**
+ * GitHub's newer changes view, as on a large PR: only the first file is
+ * rendered and the others appear once navigated to, but every file's viewed
+ * state is embedded in the page. Navigated anchors are recorded in
+ * `window.navigatedFiles`.
+ */
+function changesPage(viewed: Set<string>): string {
+  const files = [...reviewOrder.map((item) => item.path), UNLISTED_PATH];
+  const diffSummaries = files.map((path) => ({
+    changeType: 'MODIFIED',
+    markedAsViewed: viewed.has(path),
+    path,
+    pathDigest: anchorId(path).replace('diff-', ''),
+  }));
+  const data = JSON.stringify({ payload: { pullRequestsChangesRoute: { diffSummaries } } });
+  const states = Object.fromEntries(files.map((path) => [anchorId(path), viewed.has(path)]));
+
+  const treeEntry = (path: string) => `
+    <li id="${path}" role="treeitem" aria-level="2" aria-label="${path.split('/').pop()}" aria-selected="false"
+        aria-describedby="_r_1_" class="PRIVATE_TreeView-item" style="height: 32px; list-style: none">
+      <div class="PRIVATE_TreeView-item-container"><span>${path.split('/').pop()}</span></div>
+    </li>`;
+
+  return `<!doctype html>
+    <script type="application/json" data-target="react-app.embeddedData">${data}</script>
+    <aside id="sidebar" style="position: fixed; top: 0; left: 0; width: 250px; height: 300px; overflow-y: auto">
+      <ul role="tree" aria-label="File Tree">
+        <li id="src" role="treeitem" aria-level="1" aria-expanded="true" style="list-style: none">
+          <div><span>src</span></div>
+          <ul role="group">${files.filter((path) => path.startsWith('src/')).map(treeEntry).join('')}</ul>
+        </li>
+        ${files.filter((path) => !path.startsWith('src/')).map(treeEntry).join('')}
+      </ul>
+    </aside>
+    <main id="diff-comparison-viewer-container" style="margin-left: 260px">
+      <button>Refresh</button>
+    </main>
+    <script>
+      const states = ${JSON.stringify(states)};
+      window.navigatedFiles = [];
+
+      function renderFile(anchor) {
+        if (document.getElementById(anchor) || !(anchor in states)) return;
+        const viewed = states[anchor];
+        const container = document.createElement('div');
+        container.id = anchor;
+        container.style.height = '2000px';
+        container.innerHTML =
+          '<div><div><button type="button" aria-pressed="' + viewed + '" aria-label="' +
+          (viewed ? 'Viewed' : 'Not Viewed') + '">Viewed</button></div></div>';
+        container.querySelector('button').addEventListener('click', (event) => {
+          const button = event.currentTarget;
+          const pressed = button.getAttribute('aria-pressed') !== 'true';
+          button.setAttribute('aria-pressed', String(pressed));
+          button.setAttribute('aria-label', pressed ? 'Viewed' : 'Not Viewed');
+        });
+        document.querySelector('main').append(container);
+      }
+
+      // GitHub renders a file when it's navigated to
+      addEventListener('hashchange', () => {
+        const anchor = location.hash.slice(1);
+        navigatedFiles.push(anchor);
+        renderFile(anchor);
+        document.getElementById(anchor)?.scrollIntoView();
+      });
+      renderFile(Object.keys(states)[0]);
+    </script>`;
 }

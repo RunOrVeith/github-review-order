@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { diffAnchorId, fetchPullPage, isRefreshControl, parsePullUrl } from '@/utils/github';
+import {
+  diffAnchorId,
+  fetchPullPage,
+  fetchViewedSnapshot,
+  isRefreshControl,
+  parsePullUrl,
+  parseViewedSnapshot,
+  readRenderedViewToggles,
+  readViewToggle,
+} from '@/utils/github';
 
 describe('parsePullUrl', () => {
   test.each([
@@ -88,5 +97,106 @@ describe('isRefreshControl', () => {
   test('ignores non-elements', () => {
     expect(isRefreshControl(null)).toBe(false);
     expect(isRefreshControl(window)).toBe(false);
+  });
+});
+
+const VIEWED = `diff-${'1'.repeat(64)}`;
+const NOT_VIEWED = `diff-${'2'.repeat(64)}`;
+
+// Trimmed from GitHub's /changes view: the toggle sits a few levels inside the file's container
+function viewToggle(viewed: boolean) {
+  return `
+    <button data-component="Button" type="button" aria-pressed="${viewed}"
+        aria-label="${viewed ? 'Viewed' : 'Not Viewed'}" class="prc-Button-ButtonBase-9n-Xk">
+      <span data-component="text"><span class="hide-on-mobile__6ak-TF">Viewed</span></span>
+    </button>`;
+}
+
+function fileContainer(anchor: string, content: string) {
+  return `<div id="${anchor}"><div><div><div><div>${content}</div></div></div></div></div>`;
+}
+
+describe('readViewToggle', () => {
+  test("reads the toggle in the file's container", () => {
+    document.body.innerHTML = `
+      <div id="diff-comparison-viewer-container">
+        ${fileContainer(VIEWED, viewToggle(true))}
+        ${fileContainer(NOT_VIEWED, viewToggle(false))}
+      </div>`;
+
+    expect(readViewToggle(VIEWED)).toBe(true);
+    expect(readViewToggle(NOT_VIEWED)).toBe(false);
+  });
+
+  test("returns null when the file isn't rendered or has no toggle", () => {
+    document.body.innerHTML = fileContainer(NOT_VIEWED, '<button aria-pressed="true">Expand</button>');
+
+    expect(readViewToggle(VIEWED)).toBeNull();
+    expect(readViewToggle(NOT_VIEWED)).toBeNull();
+  });
+});
+
+describe('readRenderedViewToggles', () => {
+  test('maps each rendered toggle to its file, skipping wrapper ids', () => {
+    document.body.innerHTML = `
+      <div id="diff-comparison-viewer-container">
+        ${fileContainer(VIEWED, viewToggle(true))}
+        ${fileContainer(NOT_VIEWED, viewToggle(false))}
+        <button aria-pressed="true" aria-label="Viewed">outside any file</button>
+      </div>`;
+
+    expect(readRenderedViewToggles()).toEqual(
+      new Map([
+        [VIEWED, true],
+        [NOT_VIEWED, false],
+      ]),
+    );
+  });
+});
+
+describe('parseViewedSnapshot', () => {
+  // Shaped like the embedded data on a large PR's /changes page
+  const data = (diffSummaries: unknown) =>
+    JSON.stringify({ payload: { pullRequestsChangesRoute: { diffSummaries } } });
+
+  test("maps every file's anchor to its viewed state", () => {
+    const json = data([
+      { changeType: 'ADDED', markedAsViewed: true, path: 'a.py', pathDigest: '1'.repeat(64) },
+      { changeType: 'ADDED', markedAsViewed: false, path: 'b.py', pathDigest: '2'.repeat(64) },
+    ]);
+
+    expect(parseViewedSnapshot(json)).toEqual(
+      new Map([
+        [VIEWED, true],
+        [NOT_VIEWED, false],
+      ]),
+    );
+  });
+
+  test('returns null without per-file summaries, as on small PRs', () => {
+    expect(parseViewedSnapshot(JSON.stringify({ payload: {} }))).toBeNull();
+    expect(parseViewedSnapshot(data([{ path: 'a.py' }]))).toBeNull();
+    expect(parseViewedSnapshot('not json')).toBeNull();
+  });
+});
+
+describe('fetchViewedSnapshot', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("reads the states from a fresh copy of the changes page", async () => {
+    const json = JSON.stringify({
+      payload: { pullRequestsChangesRoute: { diffSummaries: [{ markedAsViewed: true, pathDigest: '1'.repeat(64) }] } },
+    });
+    const fetch = vi.fn(
+      async () => new Response(`<script type="application/json" data-target="react-app.embeddedData">${json}</script>`),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    const snapshot = await fetchViewedSnapshot({ owner: 'acme', repo: 'repo', number: 12, isChangesTab: true });
+
+    expect(fetch).toHaveBeenCalledWith(new URL('/acme/repo/pull/12/changes', location.origin), expect.anything());
+    expect(snapshot).toEqual(new Map([[VIEWED, true]]));
   });
 });
