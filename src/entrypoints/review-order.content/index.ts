@@ -154,7 +154,10 @@ export default defineContentScript({
       // A section without files has no steps to navigate or mark
       if (items.length > 0) {
         const files = items.map((item, index) => ({ path: item.path, anchor: anchors[index]! }));
-        markers = createTreeMarkers(ctx, files, (problem) => (newStatus.treeProblem = problem));
+        markers = createTreeMarkers(ctx, files, {
+          viewed: viewedState,
+          onProblem: (problem) => (newStatus.treeProblem = problem),
+        });
         steps = { pr, fingerprint, anchors, markers, viewed: viewedState };
       }
       ui = newUi;

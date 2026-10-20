@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { diffAnchorId } from '@/utils/github';
 import {
   clearTreeMarks,
+  createAnchorKeys,
   findTree,
   findTreeEntries,
   hasUnreadableTree,
@@ -85,7 +87,7 @@ describe('findTreeEntries', () => {
 
 describe('markTreeEntries', () => {
   test('numbers files in the order, warns about the rest and marks the current one', () => {
-    markTreeEntries(findTreeEntries(document), reviewSteps([C, A].map(file)), file(A));
+    markTreeEntries(findTreeEntries(document), reviewSteps([C, A].map(file)), A);
 
     expect(entry(C).dataset.reviewOrderStep).toBe('1');
     expect(entry(A).dataset.reviewOrderStep).toBe('2');
@@ -99,8 +101,8 @@ describe('markTreeEntries', () => {
 
   test('moves the current marker', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), file(A));
-    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), file(B));
+    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), A);
+    markTreeEntries(entries, reviewSteps([A, B, C].map(file)), B);
 
     expect(entry(A).hasAttribute('data-review-order-current')).toBe(false);
     expect(entry(B).hasAttribute('data-review-order-current')).toBe(true);
@@ -115,12 +117,12 @@ describe('markTreeEntries', () => {
 
   test('changes nothing when called again with the same state', async () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), A);
 
     const records: MutationRecord[] = [];
     const observer = new MutationObserver((batch) => records.push(...batch));
     observer.observe(document.body, { attributes: true, childList: true, subtree: true });
-    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), A);
     await Promise.resolve();
     observer.disconnect();
 
@@ -129,18 +131,19 @@ describe('markTreeEntries', () => {
 });
 
 describe('markTreeEntries badges', () => {
-  const marker = (anchor: string) => entry(anchor).querySelectorAll(':scope > [data-review-order-marker]');
+  const marker = (anchor: string) =>
+    entry(anchor).querySelectorAll(':scope > [data-review-order-badges] > [data-review-order-marker]');
 
   test('adds one badge per file and none to folders', () => {
     const entries = findTreeEntries(document);
-    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(A));
-    markTreeEntries(entries, reviewSteps([C, A].map(file)), file(C));
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), A);
+    markTreeEntries(entries, reviewSteps([C, A].map(file)), C);
 
     expect(marker(C)).toHaveLength(1);
     expect(marker(C)[0]?.textContent).toBe('1');
     expect(marker(A)[0]?.textContent).toBe('2');
     expect(marker(B)[0]?.textContent).toBe('!');
-    expect(marker(A)[0]?.getAttribute('aria-hidden')).toBe('true');
+    expect(marker(A)[0]?.parentElement?.getAttribute('aria-hidden')).toBe('true');
     expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(3);
   });
 
@@ -154,13 +157,65 @@ describe('markTreeEntries badges', () => {
   });
 });
 
+describe('markTreeEntries eyes', () => {
+  const eye = (anchor: string) => entry(anchor).querySelector('[data-review-order-eye]');
+
+  test('puts an eye in front of the badge of every viewed file, listed or not', () => {
+    const viewed = new Set([A, B]);
+    markTreeEntries(findTreeEntries(document), reviewSteps([A, C].map(file)), null, (key) => viewed.has(key));
+
+    // B isn't in the order, so its badge is the warning
+    for (const anchor of [A, B]) {
+      expect(entry(anchor).hasAttribute('data-review-order-viewed')).toBe(true);
+      expect(eye(anchor)?.nextElementSibling?.hasAttribute('data-review-order-marker')).toBe(true);
+    }
+    expect(eye(B)?.nextElementSibling?.textContent).toBe('!');
+    expect(entry(C).hasAttribute('data-review-order-viewed')).toBe(false);
+    expect(eye(C)).toBeNull();
+  });
+
+  test('takes the eye away again when a file is unticked', () => {
+    const viewed = new Set([A]);
+    const entries = findTreeEntries(document);
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, (key) => viewed.has(key));
+
+    viewed.delete(A);
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, (key) => viewed.has(key));
+
+    expect(eye(A)).toBeNull();
+    expect(entry(A).hasAttribute('data-review-order-viewed')).toBe(false);
+    expect(entry(A).querySelector('[data-review-order-marker]')?.textContent).toBe('1');
+  });
+
+  test('changes nothing when called again with the same states', async () => {
+    const entries = findTreeEntries(document);
+    const isViewed = (key: string) => key === A;
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, isViewed);
+
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => records.push(...batch));
+    observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+    markTreeEntries(entries, reviewSteps([A].map(file)), null, isViewed);
+    await Promise.resolve();
+    observer.disconnect();
+
+    expect(records).toEqual([]);
+  });
+
+  test('is removed with the other marks', () => {
+    markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), null, () => true);
+    clearTreeMarks(document);
+
+    expect(document.querySelectorAll('[data-review-order-eye], [data-review-order-badges]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-review-order-viewed]')).toHaveLength(0);
+  });
+});
+
 describe('reviewSteps', () => {
   test('keeps the first step of a file listed twice', () => {
     expect(reviewSteps([A, B, A].map(file))).toEqual(
       new Map([
-        [file(A).path, 1],
         [A, 1],
-        [file(B).path, 2],
         [B, 2],
       ]),
     );
@@ -169,7 +224,7 @@ describe('reviewSteps', () => {
 
 describe('clearTreeMarks', () => {
   test('removes every marker and only the titles it added', () => {
-    markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), file(A));
+    markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), A);
     clearTreeMarks(document);
 
     for (const anchor of [A, B, C]) {
@@ -242,14 +297,46 @@ describe('the /changes tree', () => {
     expect(findTree(document)).toBe(document.querySelector('[role="tree"]'));
   });
 
-  test('marks files by path', () => {
-    markTreeEntries(findTreeEntries(document), reviewSteps([b, a]), a);
+  test('marks files by path once they are keyed by anchor', async () => {
+    const onHashed = vi.fn();
+    const keyByAnchor = createAnchorKeys([b, a], onHashed);
+    markTreeEntries(keyByAnchor(findTreeEntries(document)), reviewSteps([b, a]), A);
 
     expect(document.getElementById('src/b.ts')!.dataset.reviewOrderStep).toBe('1');
     expect(document.getElementById('src/a.ts')!.dataset.reviewOrderStep).toBe('2');
     expect(document.getElementById('src/a.ts')!.hasAttribute('data-review-order-current')).toBe(true);
-    expect(document.getElementById('README.md')!.hasAttribute('data-review-order-unlisted')).toBe(true);
     expect(document.getElementById('src')!.hasAttribute('data-review-order-unlisted')).toBe(false);
+
+    // README.md isn't in the order, so it's only marked once its path is hashed
+    expect(document.getElementById('README.md')!.hasAttribute('data-review-order-unlisted')).toBe(false);
+    await vi.waitFor(() => expect(onHashed).toHaveBeenCalledOnce());
+    markTreeEntries(keyByAnchor(findTreeEntries(document)), reviewSteps([b, a]), A);
+    expect(document.getElementById('README.md')!.hasAttribute('data-review-order-unlisted')).toBe(true);
+  });
+});
+
+describe('createAnchorKeys', () => {
+  const entries = (...keys: string[]) => new Map(keys.map((key) => [key, document.createElement('li')]));
+
+  test('keeps anchors and uses the known files right away', () => {
+    const keyByAnchor = createAnchorKeys([{ path: 'src/a.ts', anchor: A }], () => {});
+    expect([...keyByAnchor(entries(B, 'src/a.ts')).keys()]).toEqual([B, A]);
+  });
+
+  test('hashes the unknown paths of a pass in one batch', async () => {
+    const onHashed = vi.fn();
+    const keyByAnchor = createAnchorKeys([], onHashed);
+
+    expect(keyByAnchor(entries('src/x.ts', 'src/y.ts')).size).toBe(0);
+    // A second pass while the batch is running doesn't start another one
+    keyByAnchor(entries('src/x.ts', 'src/y.ts'));
+    await vi.waitFor(() => expect(onHashed).toHaveBeenCalledOnce());
+
+    expect([...keyByAnchor(entries('src/x.ts', 'src/y.ts')).keys()]).toEqual([
+      await diffAnchorId('src/x.ts'),
+      await diffAnchorId('src/y.ts'),
+    ]);
+    expect(onHashed).toHaveBeenCalledOnce();
   });
 });
 

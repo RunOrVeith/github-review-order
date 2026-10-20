@@ -188,7 +188,7 @@ function isPressed(toggle: Element): boolean {
 /** The anchor of the file container an element is in, skipping wrappers like diff-comparison-viewer-container. */
 function fileAnchorOf(element: Element): string | null {
   for (let node = element.parentElement; node; node = node.parentElement) {
-    if (FILE_ANCHOR.test(node.id)) return node.id;
+    if (isFileAnchor(node.id)) return node.id;
   }
   return null;
 }
@@ -236,6 +236,11 @@ export function isRefreshControl(target: EventTarget | null): boolean {
   const control = target.closest('button, a, [role="button"]');
   const label = control?.getAttribute('aria-label') || control?.textContent || '';
   return REFRESH_LABEL.test(label.trim());
+}
+
+/** Whether the id is a file's anchor on the changes tab rather than, say, its path. */
+export function isFileAnchor(id: string): boolean {
+  return FILE_ANCHOR.test(id);
 }
 
 /** GitHub anchors each file on the changes tab at `#diff-<sha256 of its path>`. */

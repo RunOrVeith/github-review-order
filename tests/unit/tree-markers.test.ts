@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ContentScriptContext } from '#imports';
+import { diffAnchorId } from '@/utils/github';
 import {
   createTreeMarkers,
   NONE_IN_TREE,
@@ -27,7 +28,7 @@ let onProblem: ReturnType<typeof vi.fn<(problem: string | null) => void>>;
 beforeEach(async () => {
   document.body.innerHTML = `<nav><ul role="tree">${treeHtml()}</ul></nav><main></main>`;
   onProblem = vi.fn();
-  markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], onProblem);
+  markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { onProblem });
   // Let the pass triggered by the badges it just added run
   await nextFrame();
 });
@@ -80,7 +81,7 @@ describe('when the tree does not have any of the files', () => {
   test('marks nothing rather than flagging every file, and says why', () => {
     markers.stop();
     const report = vi.fn();
-    markers = createTreeMarkers(ctx, [{ path: 'src/c.ts', anchor: C }], report);
+    markers = createTreeMarkers(ctx, [{ path: 'src/c.ts', anchor: C }], { onProblem: report });
 
     expect(document.querySelectorAll('[data-review-order-unlisted], [data-review-order-marker]')).toHaveLength(0);
     expect(report).toHaveBeenLastCalledWith(NONE_IN_TREE);
@@ -116,4 +117,67 @@ test('reports nothing when the page has no file tree', async () => {
   await nextFrame();
 
   expect(onProblem).not.toHaveBeenCalled();
+});
+
+describe('viewed files', () => {
+  /** Stands in for the page's viewed states; set() ticks or unticks a file and tells the watchers. */
+  function fakeViewed(initial: string[]) {
+    const viewed = new Set(initial);
+    const listeners = new Set<() => void>();
+    return {
+      isViewed: (anchor: string) => viewed.has(anchor),
+      watch: vi.fn((onChange: () => void) => {
+        listeners.add(onChange);
+        return () => listeners.delete(onChange);
+      }),
+      set(anchor: string, isViewed: boolean) {
+        if (isViewed) viewed.add(anchor);
+        else viewed.delete(anchor);
+        for (const listener of listeners) listener();
+      },
+      listeners,
+    };
+  }
+
+  const eye = (element: Element) => element.querySelector('[data-review-order-eye]');
+
+  test('get an eye right away in a tree keyed by anchor', () => {
+    markers.stop();
+    markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { viewed: fakeViewed([B]) });
+
+    expect(eye(entry(B))).not.toBeNull();
+    expect(eye(entry(A))).toBeNull();
+  });
+
+  test("get an eye in the /changes tree once the path's anchor is known", async () => {
+    markers.stop();
+    const unlisted = await diffAnchorId('src/b.ts');
+    document.body.innerHTML = `
+      <ul role="tree">
+        <li role="treeitem" id="src/a.ts">a.ts</li>
+        <li role="treeitem" id="src/b.ts">b.ts</li>
+      </ul>`;
+    markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { viewed: fakeViewed([A, unlisted]) });
+
+    // The listed file's anchor is known, the unlisted one's is still being hashed
+    expect(eye(document.getElementById('src/a.ts')!)).not.toBeNull();
+    await vi.waitFor(() => expect(eye(document.getElementById('src/b.ts')!)).not.toBeNull());
+  });
+
+  test('follow files being ticked and unticked, until stopped', async () => {
+    markers.stop();
+    const viewed = fakeViewed([]);
+    markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { viewed });
+
+    viewed.set(A, true);
+    await nextFrame();
+    expect(eye(entry(A))).not.toBeNull();
+
+    viewed.set(A, false);
+    await nextFrame();
+    expect(eye(entry(A))).toBeNull();
+
+    markers.stop();
+    expect(viewed.listeners.size).toBe(0);
+  });
 });
