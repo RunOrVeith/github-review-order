@@ -1,3 +1,5 @@
+import { sha256Hex } from './hash';
+
 export interface ReviewItem {
   path: string;
   description: string;
@@ -8,12 +10,26 @@ const MARKER = /^review order$/i;
 const ITEM = /^\s*(\S+?)(?::(?:\s+([\s\S]*))?)?\s*$/;
 
 /**
- * Finds the "Review order" heading in a rendered PR description and parses the
- * numbered list that follows it, stopping at the next heading.
+ * The newest review order in the posts, which are oldest first, so a later
+ * comment can replace the description's. Also returns the post it's from.
+ */
+export function latestReviewOrder<T extends { body: ParentNode }>(posts: T[]): { items: ReviewItem[]; post: T } | null {
+  for (let i = posts.length - 1; i >= 0; i--) {
+    const items = parseReviewOrder(posts[i]!.body);
+    if (items) return { items, post: posts[i]! };
+  }
+  return null;
+}
+
+/**
+ * Finds the "Review order" heading in a rendered PR description or comment and
+ * parses the numbered list that follows it, stopping at the next heading. Null
+ * without such a heading, empty when the section has no files.
  */
 export function parseReviewOrder(body: ParentNode): ReviewItem[] | null {
-  const heading = Array.from(body.querySelectorAll(HEADINGS)).find((el) =>
-    MARKER.test(el.textContent?.trim() ?? ''),
+  // A quoted order is someone replying to it, not proposing one
+  const heading = Array.from(body.querySelectorAll(HEADINGS)).find(
+    (el) => !el.closest('blockquote') && MARKER.test(el.textContent?.trim() ?? ''),
   );
   if (!heading) return null;
 
@@ -23,15 +39,14 @@ export function parseReviewOrder(body: ParentNode): ReviewItem[] | null {
     : heading;
 
   for (let el = wrapper.nextElementSibling; el; el = el.nextElementSibling) {
-    if (el.matches(HEADINGS) || el.classList.contains('markdown-heading')) return null;
+    if (el.matches(HEADINGS) || el.classList.contains('markdown-heading')) return [];
     if (el.tagName !== 'OL') continue;
 
-    const items = Array.from(el.querySelectorAll(':scope > li'))
+    return Array.from(el.querySelectorAll(':scope > li'))
       .map((li) => parseItem(li.textContent ?? ''))
       .filter((item) => item !== null);
-    return items.length > 0 ? items : null;
   }
-  return null;
+  return [];
 }
 
 /** Splits "path/to/file.ts: description" at the first colon followed by whitespace. */
@@ -45,7 +60,7 @@ export function parseItem(text: string): ReviewItem | null {
   };
 }
 
-/** Changes whenever new commits are pushed or the review order is edited. */
-export function reviewFingerprint(headSha: string | null, items: ReviewItem[]): string {
-  return `${headSha ?? ''}:${JSON.stringify(items)}`;
+/** Changes whenever new commits are pushed or the review order is edited. Hashed so it stays small in storage. */
+export function reviewFingerprint(headSha: string | null, items: ReviewItem[]): Promise<string> {
+  return sha256Hex(`${headSha ?? ''}:${JSON.stringify(items)}`);
 }

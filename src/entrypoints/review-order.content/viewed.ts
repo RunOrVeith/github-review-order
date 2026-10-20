@@ -44,8 +44,11 @@ export function createViewedState(ctx: ContentScriptContext): ViewedState {
     });
   }
 
-  // GitHub may flip aria-pressed or re-render the toggle, and renders files as they scroll into view
-  const observer = new MutationObserver(notify);
+  // GitHub may flip aria-pressed or re-render the toggle, and renders files as they scroll into view.
+  // Everything else on the page, like diffs and comments, changes all the time and is skipped.
+  const observer = new MutationObserver((records) => {
+    if (changesViewedStates(records)) notify();
+  });
   observer.observe(document.body, {
     subtree: true,
     childList: true,

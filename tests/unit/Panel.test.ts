@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import Panel from '@/entrypoints/review-order.content/Panel.svelte';
+import { PanelStatus } from '@/entrypoints/review-order.content/status.svelte';
 
 // jsdom does no layout, so give the viewport a size
 beforeEach(() => {
@@ -64,6 +65,88 @@ test('disables the buttons at either end', async () => {
 test('tells the user when the file is not in the PR', async () => {
   renderPanel(0, false);
   expect(await screen.findByText('File not found in this PR')).toBeInTheDocument();
+});
+
+test('keeps the warning of the step that was picked last', async () => {
+  // The first step's file takes a while to find and isn't there; the second one is
+  let resolveFirst = (_found: boolean) => {};
+  const onNavigate = vi.fn((index: number) =>
+    index === 0 ? new Promise<boolean>((resolve) => (resolveFirst = resolve)) : true,
+  );
+  render(Panel, { items, initialIndex: 0, onNavigate, onClose: () => {} });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Next' }));
+  resolveFirst(false);
+  await tick();
+
+  expect(screen.getByText('2 / 3')).toBeInTheDocument();
+  expect(screen.queryByText('File not found in this PR')).not.toBeInTheDocument();
+});
+
+describe('status', () => {
+  test('links to where the order is from', async () => {
+    const status = new PanelStatus();
+    status.source = { text: 'File order from the PR description', href: 'https://github.com/acme/repo/pull/1' };
+    render(Panel, { items, initialIndex: 0, status, onNavigate: () => true, onClose: () => {} });
+
+    const link = screen.getByRole('link', { name: 'Where this order is from' });
+    expect(link).toHaveAccessibleDescription('File order from the PR description');
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/repo/pull/1');
+    expect(link).toHaveAttribute('target', '_blank');
+
+    status.source = { text: "File order from @carol's comment", href: 'https://github.com/acme/repo/pull/1#issuecomment-2' };
+    await tick();
+    expect(link).toHaveAccessibleDescription("File order from @carol's comment");
+  });
+
+  test('has no source icon until the source is known', () => {
+    render(Panel, { items, initialIndex: 0, status: new PanelStatus(), onNavigate: () => true, onClose: () => {} });
+    expect(screen.queryByRole('link', { name: 'Where this order is from' })).not.toBeInTheDocument();
+  });
+
+  test('clicking the source icon does not start a drag', async () => {
+    const status = new PanelStatus();
+    status.source = { text: 'File order from the PR description', href: 'https://github.com/acme/repo/pull/1' };
+    const onMove = vi.fn();
+    render(Panel, { items, initialIndex: 0, status, onNavigate: () => true, onMove, onClose: () => {} });
+    const link = screen.getByRole('link', { name: 'Where this order is from' });
+
+    await fireEvent.pointerDown(link, { button: 0, clientX: 10, clientY: 10 });
+    await fireEvent.pointerMove(link, { buttons: 1, clientX: 110, clientY: 60 });
+    await fireEvent.pointerUp(link);
+
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  test('shows and clears problems as they change', async () => {
+    const status = new PanelStatus();
+    render(Panel, { items, initialIndex: 0, status, onNavigate: () => true, onClose: () => {} });
+
+    status.reviewProblem = 'GitHub is down';
+    status.treeProblem = 'No tree';
+    await tick();
+    expect(screen.getByText('GitHub is down')).toBeInTheDocument();
+    expect(screen.getByText('No tree')).toBeInTheDocument();
+
+    status.reviewProblem = null;
+    await tick();
+    expect(screen.queryByText('GitHub is down')).not.toBeInTheDocument();
+    expect(screen.getByText('No tree')).toBeInTheDocument();
+  });
+
+  test('explains a review order without files instead of showing steps', () => {
+    const status = new PanelStatus();
+    status.reviewProblem = 'The section has no files';
+    const onNavigate = vi.fn(() => true);
+    render(Panel, { items: [], initialIndex: 0, status, onNavigate, onClose: () => {} });
+
+    expect(screen.getByText('The section has no files')).toBeInTheDocument();
+    expect(screen.getByText('Review order')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Skip viewed' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
 });
 
 test('closes', async () => {
@@ -239,6 +322,21 @@ describe('skip viewed', () => {
     expect(screen.getByRole('checkbox', { name: 'Skip viewed' })).not.toBeChecked();
     await user.click(button('Next'));
     expect(onNavigate).toHaveBeenLastCalledWith(1);
+  });
+
+  test('stops listening once unmounted', async () => {
+    const unwatch = vi.fn();
+    const { unmount } = render(Panel, {
+      items: files,
+      initialIndex: 0,
+      watchViewed: () => unwatch,
+      onNavigate: () => true,
+      onClose: () => {},
+    });
+
+    unmount();
+    await tick();
+    expect(unwatch).toHaveBeenCalledOnce();
   });
 
   test('follows files being unticked on the page', async () => {

@@ -79,6 +79,16 @@ test('tells listeners when a file gets ticked or unticked', async () => {
   expect(state.isViewed(RENDERED)).toBe(false);
 });
 
+test('ignores changes elsewhere on the page', async () => {
+  const onChange = vi.fn();
+  state.watch(onChange);
+
+  document.body.append(document.createElement('div'));
+  await nextFrame();
+
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 test('refresh replaces the embedded states and forgets toggles seen before the push', async () => {
   vi.stubGlobal(
     'fetch',

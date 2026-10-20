@@ -19,6 +19,12 @@ test('steps through the files in review order', async ({ context, page }) => {
   const panel = page.getByRole('complementary', { name: 'Review order' });
   await expect(panel.getByText('1 / 3')).toBeVisible();
   await expect(panel.getByText(first!.description)).toBeVisible();
+  const source = panel.getByRole('link', { name: 'Where this order is from' });
+  await expect(source).toHaveAttribute('href', CONVERSATION_URL);
+  await expect(panel.getByRole('tooltip')).toBeHidden();
+  await source.hover();
+  await expect(panel.getByRole('tooltip')).toBeVisible();
+  await expect(panel.getByRole('tooltip')).toHaveText('File order from the PR description');
   await expect(page).toHaveURL(`${FILES_URL}#${anchorId(first!.path)}`);
 
   await panel.getByRole('button', { name: 'Next' }).click();
@@ -92,6 +98,62 @@ test('picks up new pushes when the window gets focus again', async ({ context, p
   pr.headSha = 'b'.repeat(40);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(panel.getByText('1 / 3')).toBeVisible();
+});
+
+test('a collaborator can comment a new order, but other commenters cannot', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  const reversed = [...reviewOrder].reverse();
+  pr.comments = [
+    { login: 'carol', role: 'Collaborator', items: reversed },
+    { login: 'mallory', role: 'Contributor', items: [first!] },
+  ];
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+
+  await expect(panel.getByText('1 / 3')).toBeVisible();
+  await expect(panel.getByText(reversed[0]!.description)).toBeVisible();
+  const source = panel.getByRole('link', { name: 'Where this order is from' });
+  await expect(source).toHaveAccessibleDescription("File order from @carol's comment");
+  await expect(source).toHaveAttribute('href', `${CONVERSATION_URL}#issuecomment-2`);
+  await expect(treeEntry(page, reversed[0]!.path)).toHaveAttribute('data-review-order-step', '1');
+});
+
+test('keeps the panel and says so when GitHub fails to serve the description', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  const failure = panel.getByText(
+    "Couldn't load the latest review order (GitHub responded with 503), so this may be out of date.",
+  );
+
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  pr.conversationStatus = 503;
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(failure).toBeVisible();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  // The last known order is still there after a reload
+  await page.reload();
+  await expect(failure).toBeVisible();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  pr.conversationStatus = 200;
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(failure).toHaveCount(0);
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+});
+
+test('explains a review order section without files', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  pr.items = [];
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+
+  await expect(panel.getByText('The "Review order" section has no numbered list of files.')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Next' })).toHaveCount(0);
+  await expect(page.locator('[data-review-order-marker]')).toHaveCount(0);
 });
 
 function treeEntry(page: Page, path: string) {

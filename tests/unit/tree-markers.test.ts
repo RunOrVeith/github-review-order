@@ -1,6 +1,11 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ContentScriptContext } from '#imports';
-import { createTreeMarkers, type TreeMarkers } from '@/entrypoints/review-order.content/tree-markers';
+import {
+  createTreeMarkers,
+  NONE_IN_TREE,
+  UNREADABLE_TREE,
+  type TreeMarkers,
+} from '@/entrypoints/review-order.content/tree-markers';
 
 const A = `diff-${'a'.repeat(64)}`;
 const B = `diff-${'b'.repeat(64)}`;
@@ -17,10 +22,12 @@ const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
 const entry = (anchor: string) => document.getElementById(`file-tree-item-${anchor}`)!;
 
 let markers: TreeMarkers;
+let onProblem: ReturnType<typeof vi.fn<(problem: string | null) => void>>;
 
 beforeEach(async () => {
   document.body.innerHTML = `<nav><ul role="tree">${treeHtml()}</ul></nav><main></main>`;
-  markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }]);
+  onProblem = vi.fn();
+  markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], onProblem);
   // Let the pass triggered by the badges it just added run
   await nextFrame();
 });
@@ -61,4 +68,52 @@ test('ignores changes outside the tree', async () => {
   document.querySelector('[role="tree"]')!.append(document.createElement('li'));
   await Promise.resolve();
   expect(requestFrame).toHaveBeenCalledOnce();
+});
+
+test('reports no problem while the tree shows the order', () => {
+  expect(onProblem).not.toHaveBeenCalled();
+});
+
+describe('when the tree does not have any of the files', () => {
+  const C = `diff-${'c'.repeat(64)}`;
+
+  test('marks nothing rather than flagging every file, and says why', () => {
+    markers.stop();
+    const report = vi.fn();
+    markers = createTreeMarkers(ctx, [{ path: 'src/c.ts', anchor: C }], report);
+
+    expect(document.querySelectorAll('[data-review-order-unlisted], [data-review-order-marker]')).toHaveLength(0);
+    expect(report).toHaveBeenLastCalledWith(NONE_IN_TREE);
+  });
+
+  test('removes its marks once the files are gone, and puts them back when they return', async () => {
+    const nav = document.querySelector('nav')!;
+    nav.innerHTML = `<ul role="tree"><li role="treeitem" id="file-tree-item-${C}"><a href="#${C}">f</a></li></ul>`;
+    await nextFrame();
+
+    expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(0);
+    expect(onProblem).toHaveBeenLastCalledWith(NONE_IN_TREE);
+
+    nav.innerHTML = `<ul role="tree">${treeHtml()}</ul>`;
+    await nextFrame();
+
+    expect(entry(A).dataset.reviewOrderStep).toBe('1');
+    expect(onProblem).toHaveBeenLastCalledWith(null);
+  });
+});
+
+test("says when GitHub's tree can't be read", async () => {
+  // Files without the ids or links that identify them
+  document.querySelector('nav')!.innerHTML = '<ul role="tree"><li role="treeitem">a.ts</li></ul>';
+  await nextFrame();
+
+  expect(onProblem).toHaveBeenLastCalledWith(UNREADABLE_TREE);
+});
+
+test('reports nothing when the page has no file tree', async () => {
+  // E.g. with the sidebar collapsed
+  document.querySelector('nav')!.remove();
+  await nextFrame();
+
+  expect(onProblem).not.toHaveBeenCalled();
 });

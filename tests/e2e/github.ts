@@ -22,20 +22,39 @@ export function anchorId(path: string): string {
   return `diff-${createHash('sha256').update(path).digest('hex')}`;
 }
 
+type ReviewOrder = typeof reviewOrder;
+
+/** A comment on the conversation page, by someone with the given role in the repo. */
+export interface PullComment {
+  login: string;
+  role: 'Collaborator' | 'Contributor' | '';
+  items: ReviewOrder;
+}
+
 /**
  * Serves a minimal stand-in for a GitHub PR. Assign `headSha` on the returned
- * object to simulate a new push, and `viewed` to change which files GitHub
- * reports as viewed.
+ * object to simulate a new push, `viewed` to change which files GitHub
+ * reports as viewed, `items` to edit the description's review order, and
+ * `comments` to add comments.
  */
 export async function servePullRequest(context: BrowserContext, headSha = 'a'.repeat(40)) {
-  // Set conversationDelay to make reading the description slow, like a cold GitHub request
-  const pr = { headSha, conversationDelay: 0, viewed: new Set([reviewOrder[1]!.path]) };
+  const pr = {
+    headSha,
+    items: reviewOrder,
+    comments: [] as PullComment[],
+    // Set conversationDelay to make reading the description slow, like a cold GitHub request
+    conversationDelay: 0,
+    // Set to an error status to make GitHub fail to serve the description
+    conversationStatus: 200,
+    viewed: new Set([reviewOrder[1]!.path]),
+  };
 
   await context.route('https://github.com/**', async (route) => {
     const { pathname } = new URL(route.request().url());
     if (pathname === '/acme/repo/pull/1') {
       await new Promise((resolve) => setTimeout(resolve, pr.conversationDelay));
-      return route.fulfill({ contentType: 'text/html', body: conversationPage(pr.headSha) });
+      if (pr.conversationStatus !== 200) return route.fulfill({ status: pr.conversationStatus });
+      return route.fulfill({ contentType: 'text/html', body: conversationPage(pr) });
     }
     if (pathname === '/acme/repo/pull/1/files') {
       return route.fulfill({ contentType: 'text/html', body: filesPage() });
@@ -49,15 +68,33 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
   return pr;
 }
 
-function conversationPage(headSha: string): string {
-  const items = reviewOrder.map((item) => `<li><code>${item.path}</code>: ${item.description}</li>`);
-  return `<!doctype html>
-    <script type="application/json">{"pullRequest":{"headSha":"${headSha}"}}</script>
-    <div class="comment-body markdown-body">
-      <p>Adds the thing.</p>
-      <div class="markdown-heading"><h2 class="heading-element">Review order</h2><a class="anchor"></a></div>
-      <ol>${items.join('')}</ol>
+function conversationPage(pr: { headSha: string; items: ReviewOrder; comments: PullComment[] }): string {
+  const section = (items: ReviewOrder) => `
+    <div class="markdown-heading"><h2 class="heading-element">Review order</h2><a class="anchor"></a></div>
+    <ol>${items.map((item) => `<li><code>${item.path}</code>: ${item.description}</li>`).join('')}</ol>`;
+  const header = (login: string, role: string) => `
+    <div class="timeline-comment-header">
+      <a class="author" href="/${login}">${login}</a>${role && `<span class="Label">${role}</span>`}
     </div>`;
+  const comments = pr.comments.map(
+    (comment, index) => `
+      <div class="timeline-comment-group" id="issuecomment-${index + 2}">
+        <div class="timeline-comment">
+          ${header(comment.login, comment.role)}
+          <div class="edit-comment-hide"><table><tbody><tr>
+            <td class="d-block comment-body markdown-body">${section(comment.items)}</td>
+          </tr></tbody></table></div>
+        </div>
+      </div>`,
+  );
+  const data = { payload: { pullRequestsLayoutRoute: { pullRequest: { headSha: pr.headSha, author: { login: 'alice' } } } } };
+  return `<!doctype html>
+    <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(data)}</script>
+    <div id="pullrequest-1" class="timeline-comment-group">
+      ${header('alice', '')}
+      <div class="comment-body markdown-body"><p>Adds the thing.</p>${section(pr.items)}</div>
+    </div>
+    ${comments.join('')}`;
 }
 
 /** A changed file that the review order leaves out. */

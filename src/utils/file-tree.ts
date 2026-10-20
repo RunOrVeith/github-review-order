@@ -58,6 +58,12 @@ export function findTreeEntries(root: ParentNode): Map<string, HTMLElement> {
   return entries;
 }
 
+/** Whether the page has a file tree whose files can't be identified, as when GitHub changed its markup. */
+export function hasUnreadableTree(root: ParentNode): boolean {
+  const files = Array.from(root.querySelectorAll<HTMLElement>(`${TREE_SELECTOR} ${TREE_ITEM_SELECTOR}`));
+  return files.some((item) => !isFolder(item)) && findTree(root) === null;
+}
+
 function isFolder(entry: HTMLElement): boolean {
   return entry.hasAttribute('aria-expanded') || entry.dataset.treeEntryType === 'directory';
 }

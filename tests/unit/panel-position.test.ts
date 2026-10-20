@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { anchorPanel, clampToViewport, placePanel } from '@/utils/panel-position';
+import { fakeBrowser } from 'wxt/testing/fake-browser';
+import {
+  anchorPanel,
+  clampToViewport,
+  isPanelPosition,
+  loadPanelPosition,
+  panelPosition,
+  placePanel,
+} from '@/utils/panel-position';
 
 const size = { width: 300, height: 100 };
 const viewport = { width: 1000, height: 800 };
@@ -54,5 +62,33 @@ describe('placePanel', () => {
     const topLeft = anchorPanel({ x: 100, y: 300 }, size, viewport);
     expect(placePanel(topLeft, size, { width: 500, height: 350 })).toEqual({ x: 100, y: 250 });
     expect(placePanel(topLeft, size, viewport)).toEqual({ x: 100, y: 300 });
+  });
+});
+
+describe('loadPanelPosition', () => {
+  const position = { horizontal: { edge: 'left', offset: 40 }, vertical: { edge: 'bottom', offset: 16 } } as const;
+
+  test('returns the saved position', async () => {
+    fakeBrowser.reset();
+    await panelPosition.setValue(position);
+    expect(await loadPanelPosition()).toEqual(position);
+  });
+
+  test('removes a position it cannot read', async () => {
+    fakeBrowser.reset();
+    await fakeBrowser.storage.local.set({ panelAnchor: { x: 10, y: 20 } });
+
+    expect(await loadPanelPosition()).toBeNull();
+    expect(await fakeBrowser.storage.local.get(null)).toEqual({});
+  });
+
+  test.each([
+    null,
+    'left',
+    { horizontal: { edge: 'top', offset: 1 }, vertical: { edge: 'top', offset: 1 } },
+    { horizontal: { edge: 'left', offset: NaN }, vertical: { edge: 'top', offset: 1 } },
+    { horizontal: { edge: 'left', offset: 1 } },
+  ])('rejects %j', (value) => {
+    expect(isPanelPosition(value)).toBe(false);
   });
 });
