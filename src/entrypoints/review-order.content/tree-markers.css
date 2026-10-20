@@ -1,0 +1,38 @@
+/*
+ * Badges are an element of their own. GitHub uses the entries' ::before and
+ * ::after for its active-file indicator, so those are left alone.
+ */
+[role='treeitem'][data-review-order-step],
+[role='treeitem'][data-review-order-unlisted] {
+  position: relative;
+  /* Room for the badge, so long names truncate before it instead of running underneath */
+  padding-right: 28px !important;
+}
+
+[data-review-order-marker] {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bgColor-accent-emphasis, #0969da);
+  color: var(--fgColor-onEmphasis, #ffffff);
+  font: 600 11px/18px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  text-align: center;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+[data-review-order-unlisted] > [data-review-order-marker] {
+  background: var(--bgColor-attention-emphasis, #9a6700);
+}
+
+/* GitHub's selected-file background is more specific, and the current file must stand out */
+[role='treeitem'][data-review-order-current] {
+  border-radius: 6px;
+  background: var(--bgColor-accent-muted, #ddf4ff) !important;
+  box-shadow: inset 3px 0 0 var(--borderColor-accent-emphasis, #0969da) !important;
+}

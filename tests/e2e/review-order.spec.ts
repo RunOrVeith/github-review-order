@@ -1,6 +1,14 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { anchorId, CONVERSATION_URL, FILES_URL, reviewOrder, servePullRequest } from './github';
+import {
+  anchorId,
+  CONVERSATION_URL,
+  FILES_URL,
+  LONG_PATH,
+  reviewOrder,
+  servePullRequest,
+  UNLISTED_PATH,
+} from './github';
 
 const [first, second] = reviewOrder;
 
@@ -84,6 +92,118 @@ test('picks up new pushes when the window gets focus again', async ({ context, p
   pr.headSha = 'b'.repeat(40);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(panel.getByText('1 / 3')).toBeVisible();
+});
+
+function treeEntry(page: Page, path: string) {
+  return page.locator(`#file-tree-item-${anchorId(path)}`);
+}
+
+function isVisibleInSidebar(entry: Locator) {
+  return entry.evaluate((element) => {
+    const sidebar = document.getElementById('sidebar')!.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    return rect.top >= sidebar.top && rect.bottom <= sidebar.bottom;
+  });
+}
+
+test('marks the review order in the file tree', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+
+  for (const [index, item] of reviewOrder.entries()) {
+    await expect(treeEntry(page, item.path)).toHaveAttribute('data-review-order-step', String(index + 1));
+  }
+  await expect(treeEntry(page, UNLISTED_PATH)).toHaveAttribute('data-review-order-unlisted', '');
+  await expect(treeEntry(page, UNLISTED_PATH)).toHaveAttribute('title', 'Not in the review order');
+  await expect(treeEntry(page, UNLISTED_PATH)).not.toHaveAttribute('data-review-order-step');
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-current', '');
+});
+
+test('keeps the current file visible in the tree on every step', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  const last = reviewOrder.at(-1)!;
+
+  // The last file is at the bottom of the tree, below the sidebar's visible area
+  expect(await isVisibleInSidebar(treeEntry(page, last.path))).toBe(false);
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await panel.getByRole('button', { name: 'Next' }).click();
+
+  await expect(treeEntry(page, last.path)).toHaveAttribute('data-review-order-current', '');
+  await expect(treeEntry(page, second!.path)).not.toHaveAttribute('data-review-order-current');
+  await expect.poll(() => isVisibleInSidebar(treeEntry(page, last.path))).toBe(true);
+  // Only the tree scrolled; the page still shows the file's diff
+  await expect(page.locator(`#${anchorId(last.path)}`)).toBeInViewport();
+
+  await page.locator('#sidebar').evaluate((sidebar) => (sidebar.scrollTop = 0));
+  await panel.getByRole('button', { name: 'Reset current' }).click();
+  await expect.poll(() => isVisibleInSidebar(treeEntry(page, last.path))).toBe(true);
+});
+
+test("keeps both GitHub's active-file indicator and the step badge", async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const active = treeEntry(page, first!.path);
+  const badge = active.locator('[data-review-order-marker]');
+
+  await expect(badge).toHaveText('1');
+  await expect(badge).toBeVisible();
+  const githubIndicator = await active.evaluate((element) => {
+    const style = getComputedStyle(element, '::after');
+    return { content: style.content, width: style.width };
+  });
+  expect(githubIndicator).toEqual({ content: '""', width: '4px' });
+});
+
+test('truncates long file names before their badge', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const entry = treeEntry(page, LONG_PATH);
+  await expect(entry.locator('[data-review-order-marker]')).toHaveText('!');
+
+  const name = (await entry.locator('a').boundingBox())!;
+  const badge = (await entry.locator('[data-review-order-marker]').boundingBox())!;
+  expect(name.x + name.width).toBeLessThanOrEqual(badge.x);
+});
+
+test('shows the last known order right away while the description loads', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  await expect(panel.getByText('1 / 3')).toBeVisible();
+
+  pr.conversationDelay = 3000;
+  await page.reload();
+  await expect(panel.getByText('1 / 3')).toBeVisible({ timeout: 1000 });
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1', { timeout: 1000 });
+});
+
+test('marks the tree again after GitHub re-renders it', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1');
+
+  await page.evaluate(() => {
+    const template = document.querySelector<HTMLTemplateElement>('#file-tree-template')!;
+    document.querySelector('nav')!.replaceChildren(template.content.cloneNode(true));
+  });
+
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1');
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-current', '');
+  await expect(treeEntry(page, UNLISTED_PATH)).toHaveAttribute('data-review-order-unlisted', '');
+});
+
+test('closing the panel removes the tree markers', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1');
+
+  await panel.getByRole('button', { name: 'Close' }).click();
+
+  await expect(page.locator('[data-review-order-step], [data-review-order-unlisted], [data-review-order-current]')).toHaveCount(0);
+  await expect(treeEntry(page, UNLISTED_PATH)).not.toHaveAttribute('title');
 });
 
 async function dragPanel(page: Page, to: { x: number; y: number }) {
