@@ -28,8 +28,10 @@ export default defineContentScript({
       if (!items) return;
 
       const fingerprint = reviewFingerprint(page.headSha, items);
-      const initialIndex = await loadProgress(pr, fingerprint);
-      const initialPosition = await panelPosition.getValue();
+      const [initialIndex, initialPosition] = await Promise.all([
+        loadProgress(pr, fingerprint),
+        panelPosition.getValue(),
+      ]);
       // The user may have left the changes tab while this was loading
       if (activeKey !== key) return;
 

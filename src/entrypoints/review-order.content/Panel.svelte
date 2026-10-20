@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { clampToViewport, type PanelPosition } from '@/utils/panel-position';
+  import {
+    anchorPanel,
+    clampToViewport,
+    DEFAULT_PANEL_POSITION,
+    placePanel,
+    type PanelPosition,
+    type Point,
+    type Size,
+  } from '@/utils/panel-position';
   import type { ReviewItem } from '@/utils/review-order';
 
   interface Props {
@@ -20,75 +28,100 @@
   // svelte-ignore state_referenced_locally
   let index = $state(initialIndex);
   // svelte-ignore state_referenced_locally
-  let position = $state(initialPosition);
+  let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
   let missing = $state(false);
   const item = $derived(items[index]!);
 
   let panel: HTMLElement;
-  // Offset from the panel's corner to the pointer while dragging
-  let grab: { x: number; y: number } | null = $state(null);
+  let size = $state<Size>({ width: 0, height: 0 });
+  let viewport = $state(measureViewport());
+  // While dragging: where the pointer grabbed the panel, its size then, and where it's been dragged to
+  let drag = $state<{ grab: Point; size: Size; point: Point | null } | null>(null);
+
+  // Derived instead of stored, so clamping to a small window never overwrites where the user put it
+  const placed = $derived(drag?.point ?? placePanel(position, size, viewport));
 
   async function go(target: number) {
     index = target;
     missing = !(await onNavigate(target));
   }
 
-  function clamp(p: PanelPosition) {
-    const { width, height } = panel.getBoundingClientRect();
-    return clampToViewport(p, { width, height });
+  function measureViewport(): Size {
+    // Unlike innerWidth/innerHeight these exclude scrollbars, which fixed elements can't be drawn under
+    const { clientWidth, clientHeight } = document.documentElement;
+    return { width: clientWidth, height: clientHeight };
+  }
+
+  function measureSize() {
+    const rect = panel.getBoundingClientRect();
+    size = { width: rect.width, height: rect.height };
   }
 
   function startDrag(event: PointerEvent) {
     if (event.button !== 0 || (event.target as Element).closest('button')) return;
 
     const rect = panel.getBoundingClientRect();
-    grab = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    drag = {
+      grab: { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      size: { width: rect.width, height: rect.height },
+      point: null,
+    };
     (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
     event.preventDefault();
   }
 
-  function drag(event: PointerEvent) {
-    if (!grab) return;
-    position = clamp({ x: event.clientX - grab.x, y: event.clientY - grab.y });
+  function moveDrag(event: PointerEvent) {
+    if (!drag) return;
+    // The button was released without the header getting a pointerup
+    if (event.buttons === 0) return endDrag();
+
+    drag.point = clampToViewport(
+      { x: event.clientX - drag.grab.x, y: event.clientY - drag.grab.y },
+      drag.size,
+      viewport,
+    );
   }
 
   function endDrag() {
-    if (!grab) return;
-    grab = null;
-    if (position) onMove?.(position);
-  }
+    if (!drag) return;
+    const { point, size: draggedSize } = drag;
+    drag = null;
+    // Plain clicks on the header don't move the panel
+    if (!point) return;
 
-  function keepInViewport() {
-    // A position saved in a larger window could otherwise end up off-screen
-    if (position) position = clamp(position);
+    position = anchorPanel(point, draggedSize, viewport);
+    onMove?.(position);
   }
 
   onMount(() => {
-    keepInViewport();
+    measureSize();
+    // Keeps the panel inside the viewport when its content changes height
+    const observer = new ResizeObserver(measureSize);
+    observer.observe(panel);
     void go(index);
+    return () => observer.disconnect();
   });
 </script>
 
-<svelte:window onresize={keepInViewport} />
+<svelte:window onresize={() => (viewport = measureViewport())} />
 
 <aside
   bind:this={panel}
   class="panel"
-  class:dragging={grab}
+  class:dragging={drag}
   aria-label="Review order"
-  style:left={position && `${position.x}px`}
-  style:top={position && `${position.y}px`}
-  style:right={position && 'auto'}
-  style:bottom={position && 'auto'}
+  style:left={`${placed.x}px`}
+  style:top={`${placed.y}px`}
 >
   <header
     role="group"
     aria-label="Drag to move"
     title="Drag to move"
     onpointerdown={startDrag}
-    onpointermove={drag}
+    onpointermove={moveDrag}
     onpointerup={endDrag}
     onpointercancel={endDrag}
+    onlostpointercapture={endDrag}
   >
     <span class="step"><span class="grip" aria-hidden="true">⠿</span> {index + 1} / {items.length}</span>
     <button class="close" aria-label="Close" onclick={onClose}>✕</button>
@@ -119,8 +152,6 @@
     --warning: #9a6700;
 
     position: fixed;
-    right: 16px;
-    bottom: 16px;
     z-index: 2147483647;
     box-sizing: border-box;
     width: min(340px, calc(100vw - 32px));

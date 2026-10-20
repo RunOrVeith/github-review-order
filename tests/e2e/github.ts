@@ -6,7 +6,13 @@ export const FILES_URL = `${CONVERSATION_URL}/files`;
 
 export const reviewOrder = [
   { path: 'src/core.ts', description: 'start with the core change' },
-  { path: 'src/ui.ts', description: 'then the UI using it' },
+  {
+    path: 'src/ui.ts',
+    // Long enough to wrap, so stepping to it makes the panel taller
+    description:
+      'then the UI using it, which wires the new core change into every screen that shows ' +
+      'review state and needs a careful look at how loading and error states are handled',
+  },
   { path: 'README.md', description: 'docs last' },
 ];
 

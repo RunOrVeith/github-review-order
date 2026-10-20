@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { anchorId, CONVERSATION_URL, FILES_URL, reviewOrder, servePullRequest } from './github';
 
@@ -53,27 +54,81 @@ test('keeps progress across reloads until new commits are pushed', async ({ cont
   await expect(panel.getByText('1 / 3')).toBeVisible();
 });
 
+async function dragPanel(page: Page, to: { x: number; y: number }) {
+  const handle = page.getByRole('group', { name: 'Drag to move' });
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 5 });
+  await page.mouse.up();
+}
+
+function viewportSize(page: Page) {
+  return page.evaluate(() => ({
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+  }));
+}
+
 test('can be dragged out of the way and stays there', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
-  const handle = panel.getByRole('group', { name: 'Drag to move' });
+  const before = (await panel.boundingBox())!;
 
-  const before = (await handle.boundingBox())!;
-  await page.mouse.move(before.x + 20, before.y + 10);
-  await page.mouse.down();
-  await page.mouse.move(60, 40, { steps: 5 });
-  await page.mouse.up();
-
+  await dragPanel(page, { x: 60, y: 40 });
   const moved = (await panel.boundingBox())!;
   expect(moved.x).toBeLessThan(before.x);
   expect(moved.y).toBeLessThan(before.y);
 
   // Navigating must not move it back
   await panel.getByRole('button', { name: 'Next' }).click();
-  expect(await panel.boundingBox()).toEqual(moved);
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+  expect(await panel.boundingBox()).toMatchObject({ x: moved.x, y: moved.y });
 
   await page.reload();
   await expect(panel).toBeVisible();
-  expect(await panel.boundingBox()).toEqual(moved);
+  expect(await panel.boundingBox()).toMatchObject({ x: moved.x, y: moved.y });
+});
+
+test('grows upward when parked at the bottom edge', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  const viewport = await viewportSize(page);
+
+  await dragPanel(page, { x: 300, y: viewport.height });
+  const parked = (await panel.boundingBox())!;
+  expect(parked.y + parked.height).toBeCloseTo(viewport.height, 0);
+
+  // The second description wraps onto more lines
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+  // The new size is only reported on the next frame, so wait for the layout to settle
+  const bottomEdge = async () => {
+    const box = (await panel.boundingBox())!;
+    return Math.round(box.y + box.height);
+  };
+  await expect.poll(bottomEdge).toBe(Math.round(viewport.height));
+  expect((await panel.boundingBox())!.height).toBeGreaterThan(parked.height);
+});
+
+test('keeps its corner when the window is resized', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+
+  const distanceToCorner = async () => {
+    const box = (await panel.boundingBox())!;
+    const viewport = await viewportSize(page);
+    return { right: viewport.width - box.x - box.width, bottom: viewport.height - box.y - box.height };
+  };
+  const original = await distanceToCorner();
+
+  await page.setViewportSize({ width: 900, height: 500 });
+  await expect.poll(distanceToCorner).toEqual(original);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect.poll(distanceToCorner).toEqual(original);
 });

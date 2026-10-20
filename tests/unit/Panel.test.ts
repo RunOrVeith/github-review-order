@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { expect, test, vi } from 'vitest';
+import { beforeEach, expect, test, vi } from 'vitest';
 import Panel from '@/entrypoints/review-order.content/Panel.svelte';
+
+// jsdom does no layout, so give the viewport a size
+beforeEach(() => {
+  Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1000 });
+  Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: 800 });
+});
 
 const items = [
   { path: 'src/a.ts', description: 'first' },
@@ -65,8 +71,19 @@ test('closes', async () => {
   expect(onClose).toHaveBeenCalled();
 });
 
+test('starts in the bottom-right corner', () => {
+  renderPanel();
+
+  const panel = screen.getByRole('complementary', { name: 'Review order' });
+  expect(panel.style.left).toBe('984px');
+  expect(panel.style.top).toBe('784px');
+});
+
 test('starts at the saved position', () => {
-  const initialPosition = { x: 40, y: 60 };
+  const initialPosition = {
+    horizontal: { edge: 'left', offset: 40 },
+    vertical: { edge: 'top', offset: 60 },
+  } as const;
   render(Panel, { items, initialIndex: 0, initialPosition, onNavigate: () => true, onClose: () => {} });
 
   const panel = screen.getByRole('complementary', { name: 'Review order' });
@@ -74,28 +91,70 @@ test('starts at the saved position', () => {
   expect(panel.style.top).toBe('60px');
 });
 
-test('can be dragged by its header', async () => {
+function renderDraggable() {
   const onMove = vi.fn();
   render(Panel, { items, initialIndex: 0, onNavigate: () => true, onMove, onClose: () => {} });
-  const handle = screen.getByRole('group', { name: 'Drag to move' });
+  return {
+    onMove,
+    panel: screen.getByRole('complementary', { name: 'Review order' }),
+    handle: screen.getByRole('group', { name: 'Drag to move' }),
+  };
+}
+
+test('can be dragged by its header', async () => {
+  const { onMove, panel, handle } = renderDraggable();
 
   await fireEvent.pointerDown(handle, { button: 0, clientX: 10, clientY: 10 });
-  await fireEvent.pointerMove(handle, { clientX: 110, clientY: 60 });
+  await fireEvent.pointerMove(handle, { buttons: 1, clientX: 110, clientY: 60 });
   await fireEvent.pointerUp(handle);
 
-  const panel = screen.getByRole('complementary', { name: 'Review order' });
   expect(panel.style.left).toBe('100px');
   expect(panel.style.top).toBe('50px');
-  expect(onMove).toHaveBeenCalledExactlyOnceWith({ x: 100, y: 50 });
+  expect(onMove).toHaveBeenCalledExactlyOnceWith({
+    horizontal: { edge: 'left', offset: 100 },
+    vertical: { edge: 'top', offset: 50 },
+  });
+});
+
+test('a click on the header does not save a position', async () => {
+  const { onMove, handle } = renderDraggable();
+
+  await fireEvent.pointerDown(handle, { button: 0, clientX: 10, clientY: 10 });
+  await fireEvent.pointerUp(handle);
+
+  expect(onMove).not.toHaveBeenCalled();
+});
+
+test('stops dragging when pointer capture is lost', async () => {
+  const { onMove, panel, handle } = renderDraggable();
+
+  await fireEvent.pointerDown(handle, { button: 0, clientX: 10, clientY: 10 });
+  await fireEvent.pointerMove(handle, { buttons: 1, clientX: 110, clientY: 60 });
+  await fireEvent(handle, new Event('lostpointercapture'));
+  await fireEvent.pointerMove(handle, { buttons: 1, clientX: 300, clientY: 300 });
+
+  expect(panel.style.left).toBe('100px');
+  expect(onMove).toHaveBeenCalledOnce();
+});
+
+test('stops dragging when the button was released elsewhere', async () => {
+  const { onMove, panel, handle } = renderDraggable();
+
+  await fireEvent.pointerDown(handle, { button: 0, clientX: 10, clientY: 10 });
+  await fireEvent.pointerMove(handle, { buttons: 1, clientX: 110, clientY: 60 });
+  await fireEvent.pointerMove(handle, { buttons: 0, clientX: 300, clientY: 300 });
+  await fireEvent.pointerMove(handle, { buttons: 1, clientX: 400, clientY: 400 });
+
+  expect(panel.style.left).toBe('100px');
+  expect(onMove).toHaveBeenCalledOnce();
 });
 
 test('clicking the close button does not start a drag', async () => {
-  const onMove = vi.fn();
-  render(Panel, { items, initialIndex: 0, onNavigate: () => true, onMove, onClose: () => {} });
+  const { onMove } = renderDraggable();
   const close = screen.getByRole('button', { name: 'Close' });
 
   await fireEvent.pointerDown(close, { button: 0, clientX: 10, clientY: 10 });
-  await fireEvent.pointerMove(close, { clientX: 110, clientY: 60 });
+  await fireEvent.pointerMove(close, { buttons: 1, clientX: 110, clientY: 60 });
   await fireEvent.pointerUp(close);
 
   expect(onMove).not.toHaveBeenCalled();
