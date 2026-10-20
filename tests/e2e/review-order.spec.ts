@@ -52,3 +52,28 @@ test('keeps progress across reloads until new commits are pushed', async ({ cont
   await page.reload();
   await expect(panel.getByText('1 / 3')).toBeVisible();
 });
+
+test('can be dragged out of the way and stays there', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  const handle = panel.getByRole('group', { name: 'Drag to move' });
+
+  const before = (await handle.boundingBox())!;
+  await page.mouse.move(before.x + 20, before.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(60, 40, { steps: 5 });
+  await page.mouse.up();
+
+  const moved = (await panel.boundingBox())!;
+  expect(moved.x).toBeLessThan(before.x);
+  expect(moved.y).toBeLessThan(before.y);
+
+  // Navigating must not move it back
+  await panel.getByRole('button', { name: 'Next' }).click();
+  expect(await panel.boundingBox()).toEqual(moved);
+
+  await page.reload();
+  await expect(panel).toBeVisible();
+  expect(await panel.boundingBox()).toEqual(moved);
+});

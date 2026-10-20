@@ -29,6 +29,7 @@ export default defineContentScript({
 
       const fingerprint = reviewFingerprint(page.headSha, items);
       const initialIndex = await loadProgress(pr, fingerprint);
+      const initialPosition = await panelPosition.getValue();
       // The user may have left the changes tab while this was loading
       if (activeKey !== key) return;
 
@@ -43,7 +44,9 @@ export default defineContentScript({
             props: {
               items,
               initialIndex,
+              initialPosition,
               onNavigate: (index) => navigate(pr, fingerprint, items, index),
+              onMove: (position) => void panelPosition.setValue(position),
               onClose: () => ui?.remove(),
             },
           }),
