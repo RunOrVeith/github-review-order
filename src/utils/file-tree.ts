@@ -1,10 +1,11 @@
+import { diffAnchorId, isFileAnchor } from './github';
+
 // Everything that depends on GitHub's file tree markup lives here
 const TREE_SELECTOR = '[role="tree"]';
 const TREE_ITEM_SELECTOR = '[role="treeitem"]';
 const ENTRY_SELECTOR = '[role="tree"] [role="treeitem"][id]';
 const DIFF_LINK_SELECTOR = '[role="tree"] a[href*="#diff-"]';
 const ANCHOR = /diff-[0-9a-f]{64}/;
-const FILE_ANCHOR = /^diff-[0-9a-f]{64}$/;
 // React's useId values, which the /changes tree uses for other elements' ids
 const GENERATED_ID = /^(_r_|_R_|:r)/;
 
@@ -31,11 +32,6 @@ const UNLISTED_TITLE = 'Not in the review order';
 
 type Rect = Pick<DOMRect, 'top' | 'bottom' | 'height'>;
 
-/** Whether a tree entry's key is a file's anchor rather than its path. */
-export function isFileAnchor(key: string): boolean {
-  return FILE_ANCHOR.test(key);
-}
-
 /** The file tree on a PR's changes page, if it has one. */
 export function findTree(root: ParentNode): HTMLElement | null {
   return (
@@ -47,7 +43,8 @@ export function findTree(root: ParentNode): HTMLElement | null {
 /**
  * Maps each file to its entry in GitHub's file tree. Classic trees identify
  * files by their anchor (`diff-<sha256 of the path>`), the /changes tree by
- * their path, so entries are keyed by whichever the markup has.
+ * their path, so entries are keyed by whichever the markup has; createAnchorKeys
+ * turns that into anchors.
  */
 export function findTreeEntries(root: ParentNode): Map<string, HTMLElement> {
   const keys = new Map<HTMLElement, string>();
@@ -83,15 +80,44 @@ function isFolder(entry: HTMLElement): boolean {
 }
 
 /**
- * Each file's step in the review order, counting from 1, under both its path
- * and its anchor. A file listed twice keeps its first step.
+ * Re-keys tree entries by anchor, so nothing past reading the tree has to know
+ * which way it identifies files. Paths are hashed into anchors once, all
+ * unknown ones of a pass in one batch, with onHashed called when a batch is
+ * done; until then their entries are left out. The known files' anchors are
+ * used right away.
  */
+export function createAnchorKeys(
+  known: ReviewFile[],
+  onHashed: () => void,
+): (entries: Map<string, HTMLElement>) => Map<string, HTMLElement> {
+  const anchors = new Map(known.map((file) => [file.path, file.anchor]));
+  let hashing = false;
+
+  return (entries) => {
+    const byAnchor = new Map<string, HTMLElement>();
+    const unknown: string[] = [];
+    for (const [key, entry] of entries) {
+      const anchor = isFileAnchor(key) ? key : anchors.get(key);
+      if (anchor === undefined) unknown.push(key);
+      else if (!byAnchor.has(anchor)) byAnchor.set(anchor, entry);
+    }
+
+    if (unknown.length > 0 && !hashing) {
+      hashing = true;
+      // A failed batch is retried on the next pass that has unknown paths, not right away
+      void Promise.all(unknown.map(async (path) => anchors.set(path, await diffAnchorId(path))))
+        .then(onHashed, () => {})
+        .finally(() => (hashing = false));
+    }
+    return byAnchor;
+  };
+}
+
+/** Each file's step in the review order, counting from 1, by anchor. A file listed twice keeps its first step. */
 export function reviewSteps(files: ReviewFile[]): Map<string, number> {
   const steps = new Map<string, number>();
-  files.forEach(({ path, anchor }, index) => {
-    for (const key of [path, anchor]) {
-      if (!steps.has(key)) steps.set(key, index + 1);
-    }
+  files.forEach(({ anchor }, index) => {
+    if (!steps.has(anchor)) steps.set(anchor, index + 1);
   });
   return steps;
 }
@@ -99,18 +125,19 @@ export function reviewSteps(files: ReviewFile[]): Map<string, number> {
 /**
  * Gives each file a badge with its step in the review order, or a warning if
  * it's missing from it, plus an eye once it's viewed, and highlights the
- * current one. Only writes what changed.
+ * current one. Entries, steps and the current file are by anchor. Only writes
+ * what changed.
  */
 export function markTreeEntries(
   entries: Map<string, HTMLElement>,
   steps: Map<string, number>,
-  current: ReviewFile | null,
-  isViewed: (key: string) => boolean = () => false,
+  current: string | null,
+  isViewed: (anchor: string) => boolean = () => false,
 ): void {
-  for (const [key, entry] of entries) {
-    const step = steps.get(key);
-    const isCurrent = key === current?.path || key === current?.anchor;
-    const viewed = isViewed(key);
+  for (const [anchor, entry] of entries) {
+    const step = steps.get(anchor);
+    const isCurrent = anchor === current;
+    const viewed = isViewed(anchor);
     setAttribute(entry, STEP, step === undefined ? null : String(step));
     setAttribute(entry, UNLISTED, step === undefined ? '' : null);
     setAttribute(entry, CURRENT, isCurrent ? '' : null);
@@ -118,11 +145,6 @@ export function markTreeEntries(
     setBadges(entry, step === undefined ? '!' : String(step), viewed);
     setUnlistedTitle(entry, step === undefined);
   }
-}
-
-/** A file's tree entry, whichever way the tree identifies it. */
-export function treeEntryFor(entries: Map<string, HTMLElement>, file: ReviewFile): HTMLElement | undefined {
-  return entries.get(file.path) ?? entries.get(file.anchor);
 }
 
 export function clearTreeMarks(root: ParentNode): void {

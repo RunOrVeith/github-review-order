@@ -30,10 +30,9 @@ export function createTreeMarkers(
   { viewed, onProblem = () => {} }: TreeMarkerOptions = {},
 ): TreeMarkers {
   const steps = reviewSteps(files);
-  // Viewed states are keyed by anchor, but the /changes tree keys its files by path, whose hash is the anchor
-  const anchors = new Map(files.map((file) => [file.path, file.anchor]));
-  const hashing = new Set<string>();
-  let current: ReviewFile | null = null;
+  const keyByAnchor = createAnchorKeys(files, schedule);
+  // The current file's anchor
+  let current: string | null = null;
   let tree: HTMLElement | null = null;
   let frame: number | null = null;
   // Whether the tree has marks on it, so they're removed once it can't be read anymore
@@ -49,36 +48,16 @@ export function createTreeMarkers(
 
   function apply(): Map<string, HTMLElement> {
     if (!tree?.isConnected) tree = findTree(document);
-    const entries = tree ? findTreeEntries(tree) : new Map<string, HTMLElement>();
+    const entries = tree ? keyByAnchor(findTreeEntries(tree)) : new Map<string, HTMLElement>();
 
     // If none of the order's files are in the tree it was most likely misread, and every file would be flagged
-    const matched = files.some((file) => treeEntryFor(entries, file) !== undefined);
-    if (matched) markTreeEntries(entries, steps, current, isViewed);
+    const matched = files.some((file) => entries.has(file.anchor));
+    if (matched) markTreeEntries(entries, steps, current, (anchor) => viewed?.isViewed(anchor) ?? false);
     else if (marked) clearTreeMarks(document);
     marked = matched;
 
     report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
     return entries;
-  }
-
-  function isViewed(key: string): boolean {
-    const anchor = anchorOf(key);
-    return anchor !== undefined && (viewed?.isViewed(anchor) ?? false);
-  }
-
-  /** The file's anchor, or undefined while its path is still being hashed. */
-  function anchorOf(key: string): string | undefined {
-    if (isFileAnchor(key)) return key;
-    const anchor = anchors.get(key);
-    if (anchor !== undefined || !viewed || hashing.has(key)) return anchor;
-
-    hashing.add(key);
-    void diffAnchorId(key).then((hashed) => {
-      anchors.set(key, hashed);
-      hashing.delete(key);
-      schedule();
-    });
-    return undefined;
   }
 
   function schedule() {
@@ -123,9 +102,9 @@ export function createTreeMarkers(
   return {
     setCurrent(index) {
       if (stopped) return false;
-      current = files[index] ?? null;
+      current = files[index]?.anchor ?? null;
 
-      const entry = current ? treeEntryFor(apply(), current) : undefined;
+      const entry = current ? apply().get(current) : undefined;
       if (entry) scrollTreeTo(entry);
       return entry !== undefined;
     },
