@@ -52,6 +52,9 @@ function conversationPage(headSha: string): string {
     </div>`;
 }
 
+/** A changed file that the review order leaves out. */
+export const UNLISTED_PATH = 'src/unlisted.ts';
+
 function filesPage(): string {
   // Listed out of order so scrolling has to jump around
   const files = [...reviewOrder].reverse().map(
@@ -59,5 +62,32 @@ function filesPage(): string {
   );
   // Stands in for GitHub's banner button that reloads the diff in place after a push
   const refresh = '<button>Refresh</button>';
-  return `<!doctype html>${refresh}${files.join('')}`;
+  return `<!doctype html>
+    <aside id="sidebar" style="position: fixed; top: 0; left: 0; width: 250px; height: 300px; overflow-y: auto">
+      <file-tree><nav aria-label="File Tree Navigation">${fileTree()}</nav></file-tree>
+    </aside>
+    <template id="file-tree-template">${fileTree()}</template>
+    <main style="margin-left: 260px">${refresh}${files.join('')}</main>`;
+}
+
+/** GitHub's classic file tree markup, long enough that the sidebar has to scroll. */
+function fileTree(): string {
+  const entry = (path: string) => `
+    <li id="file-tree-item-${anchorId(path)}" class="ActionList-item ActionList-item--subItem" role="treeitem"
+        aria-level="2" data-tree-entry-type="file" style="height: 32px">
+      <span data-filterable-item-text hidden>${path}</span>
+      <a class="ActionList-content" href="#${anchorId(path)}">${path.split('/').pop()}</a>
+    </li>`;
+  const padding = Array.from({ length: 30 }, (_, i) => `src/padding-${String(i).padStart(2, '0')}.ts`);
+  const src = ['src/core.ts', 'src/ui.ts', UNLISTED_PATH, ...padding];
+
+  return `
+    <ul class="ActionList ActionList--tree" role="tree" aria-label="File Tree">
+      <li class="ActionList-item ActionList-item--hasSubItem" role="treeitem" aria-level="1"
+          data-tree-entry-type="directory">
+        <button class="ActionList-content">src</button>
+        <ul class="ActionList ActionList--subGroup" role="group">${src.map(entry).join('')}</ul>
+      </li>
+      ${entry('README.md')}
+    </ul>`;
 }
