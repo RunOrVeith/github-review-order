@@ -57,5 +57,7 @@ function filesPage(): string {
   const files = [...reviewOrder].reverse().map(
     (item) => `<div id="${anchorId(item.path)}" style="height: 2000px">${item.path}</div>`,
   );
-  return `<!doctype html>${files.join('')}`;
+  // Stands in for GitHub's banner button that reloads the diff in place after a push
+  const refresh = '<button>Refresh</button>';
+  return `<!doctype html>${refresh}${files.join('')}`;
 }

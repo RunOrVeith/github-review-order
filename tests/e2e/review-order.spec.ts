@@ -54,6 +54,38 @@ test('keeps progress across reloads until new commits are pushed', async ({ cont
   await expect(panel.getByText('1 / 3')).toBeVisible();
 });
 
+test("picks up new pushes from GitHub's in-page Refresh without a reload", async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  // Nothing changed yet, so the panel keeps its step once the re-check is done
+  const recheck = page.waitForResponse(CONVERSATION_URL);
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await recheck;
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  pr.headSha = 'b'.repeat(40);
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(panel.getByText('1 / 3')).toBeVisible();
+});
+
+test('picks up new pushes when the window gets focus again', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+
+  pr.headSha = 'b'.repeat(40);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(panel.getByText('1 / 3')).toBeVisible();
+});
+
 async function dragPanel(page: Page, to: { x: number; y: number }) {
   const handle = page.getByRole('group', { name: 'Drag to move' });
   const box = (await handle.boundingBox())!;

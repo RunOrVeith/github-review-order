@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { diffAnchorId, fetchPullPage, parsePullUrl } from '@/utils/github';
+import { diffAnchorId, fetchPullPage, isRefreshControl, parsePullUrl } from '@/utils/github';
 
 describe('parsePullUrl', () => {
   test.each([
@@ -56,5 +56,37 @@ describe('fetchPullPage', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
 
     expect(await fetchPullPage(pr)).toEqual({ description: null, headSha: null });
+  });
+});
+
+describe('isRefreshControl', () => {
+  function element(html: string): Element {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    return container.querySelector('[data-target]') ?? container.firstElementChild!;
+  }
+
+  test.each([
+    '<button>Refresh</button>',
+    '<button><span data-target>Reload</span></button>',
+    '<a href="#">Refresh page</a>',
+    '<div role="button">refresh</div>',
+    '<button aria-label="Refresh"><svg></svg></button>',
+  ])('matches %s', (html) => {
+    expect(isRefreshControl(element(html))).toBe(true);
+  });
+
+  test.each([
+    '<button>Reset current</button>',
+    '<button>Viewed</button>',
+    '<span>Refresh</span>',
+    '<p><button>Load diff</button> to refresh</p>',
+  ])('ignores %s', (html) => {
+    expect(isRefreshControl(element(html))).toBe(false);
+  });
+
+  test('ignores non-elements', () => {
+    expect(isRefreshControl(null)).toBe(false);
+    expect(isRefreshControl(window)).toBe(false);
   });
 });

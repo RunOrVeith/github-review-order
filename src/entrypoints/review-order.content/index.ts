@@ -11,30 +11,46 @@ export default defineContentScript({
   async main(ctx) {
     let ui: ShadowRootContentScriptUi<ReturnType<typeof mount>> | undefined;
     // The PR whose changes tab is open; hash-only URL changes from scrolling keep it unchanged
-    let activeKey: string | null = null;
+    let active: { key: string; pr: PullRef } | null = null;
+    // What the panel currently shows, so re-checks only rebuild it when something changed
+    let shownFingerprint: string | null = null;
+    let recheck: Promise<void> | null = null;
+
+    function hide() {
+      ui?.remove();
+      ui = undefined;
+      shownFingerprint = null;
+    }
 
     async function update(url: string) {
       const pr = parsePullUrl(url);
       const key = pr?.isChangesTab ? `${pr.owner}/${pr.repo}#${pr.number}` : null;
-      if (key === activeKey) return;
+      if (key === (active?.key ?? null)) return;
 
-      activeKey = key;
-      ui?.remove();
-      ui = undefined;
-      if (!pr || !key) return;
+      active = pr && key ? { key, pr } : null;
+      hide();
+      if (pr && key) await show(pr, key);
+    }
 
+    /** Shows the panel for the PR's current review order, or rebuilds it if that changed. */
+    async function show(pr: PullRef, key: string) {
       const page = await fetchPullPage(pr);
       const items = page.description && parseReviewOrder(page.description);
-      if (!items) return;
+      // The user may have left the changes tab while this was loading
+      if (active?.key !== key) return;
+      if (!items) return hide();
 
       const fingerprint = reviewFingerprint(page.headSha, items);
+      if (fingerprint === shownFingerprint) return;
+
       const [initialIndex, initialPosition] = await Promise.all([
         loadProgress(pr, fingerprint),
         panelPosition.getValue(),
       ]);
-      // The user may have left the changes tab while this was loading
-      if (activeKey !== key) return;
+      if (active?.key !== key) return;
 
+      hide();
+      shownFingerprint = fingerprint;
       ui = await createShadowRootUi(ctx, {
         name: 'review-order-panel',
         position: 'inline',
@@ -49,7 +65,7 @@ export default defineContentScript({
               initialPosition,
               onNavigate: (index) => navigate(pr, fingerprint, items, index),
               onMove: (position) => void panelPosition.setValue(position),
-              onClose: () => ui?.remove(),
+              onClose: hide,
             },
           }),
         onRemove: (app) => {
@@ -59,8 +75,30 @@ export default defineContentScript({
       ui.mount();
     }
 
+    /** Picks up new pushes and description edits while the changes tab stays open. */
+    function recheckOpenPanel() {
+      // A closed panel stays closed until the changes tab is opened again
+      if (!active || !ui || recheck) return;
+      recheck = show(active.pr, active.key).finally(() => (recheck = null));
+    }
+
     // The event can fire before location.href is updated, so use the URL it carries
     ctx.addEventListener(window, 'wxt:locationchange', ({ newUrl }) => void update(newUrl.href));
+    // GitHub's Refresh button for new pushes reloads the diff in place, without a navigation.
+    // Capturing sees the click before GitHub can remove the banner it's in.
+    ctx.addEventListener(
+      document,
+      'click',
+      (event) => {
+        if (isRefreshControl(event.target)) recheckOpenPanel();
+      },
+      { capture: true },
+    );
+    // Coming back to the tab, e.g. after pushing from a terminal
+    ctx.addEventListener(window, 'focus', recheckOpenPanel);
+    ctx.addEventListener(document, 'visibilitychange', () => {
+      if (document.visibilityState === 'visible') recheckOpenPanel();
+    });
     await update(location.href);
   },
 });

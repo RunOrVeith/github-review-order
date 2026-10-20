@@ -15,6 +15,7 @@ const PULL_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(\/.*)?$/;
 const CHANGES_TAB = /^\/(files|changes)(\/|$)/;
 const DESCRIPTION_SELECTOR = '.comment-body.markdown-body';
 const HEAD_SHA = /"headSha":"([0-9a-f]{40})"/;
+const REFRESH_LABEL = /^(refresh|reload)\b/i;
 
 export function parsePullUrl(url: string): PullRef | null {
   const match = PULL_PATH.exec(new URL(url).pathname);
@@ -40,6 +41,15 @@ export async function fetchPullPage(pr: PullRef): Promise<PullPage> {
     description: doc.querySelector(DESCRIPTION_SELECTOR),
     headSha: HEAD_SHA.exec(html)?.[1] ?? null,
   };
+}
+
+/** Whether a click landed on a button or link like GitHub's "Refresh" for newly pushed changes. */
+export function isRefreshControl(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+
+  const control = target.closest('button, a, [role="button"]');
+  const label = control?.getAttribute('aria-label') || control?.textContent || '';
+  return REFRESH_LABEL.test(label.trim());
 }
 
 /** GitHub anchors each file on the changes tab at `#diff-<sha256 of its path>`. */
