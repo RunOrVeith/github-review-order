@@ -296,7 +296,7 @@ describe('skip viewed', () => {
     expect(button('Next')).toBeDisabled();
     expect(button('Next')).toHaveAttribute('title', 'All files after this one are viewed');
     expect(button('Previous')).toBeEnabled();
-    expect(button('Previous')).not.toHaveAttribute('title');
+    expect(button('Previous')).toHaveAttribute('title', 'Previous file');
   });
 
   test('Reset current stays on a viewed file', async () => {
@@ -349,6 +349,58 @@ describe('skip viewed', () => {
     await tick();
 
     expect(button('Next')).toBeEnabled();
+  });
+});
+
+describe('minimizing', () => {
+  function renderMinimizable(initialMinimized = false) {
+    const onNavigate = vi.fn(() => true);
+    const onMinimizedChange = vi.fn();
+    render(Panel, { items, initialIndex: 0, initialMinimized, onNavigate, onMinimizedChange, onClose: () => {} });
+    return { onNavigate, onMinimizedChange, user: userEvent.setup() };
+  }
+
+  const handle = () => screen.getByRole('group', { name: 'Drag to move' });
+
+  test('a double-click shrinks the panel to the step and its arrows, and another one restores it', async () => {
+    const { onMinimizedChange, user } = renderMinimizable();
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+
+    await user.dblClick(handle());
+    expect(onMinimizedChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText('1 / 3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
+    for (const gone of ['src/a.ts', 'first', 'Skip viewed']) expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset current' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+
+    await user.dblClick(handle());
+    expect(onMinimizedChange).toHaveBeenLastCalledWith(false);
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+  });
+
+  test('a double-click on the details below the header works too', async () => {
+    const { onMinimizedChange, user } = renderMinimizable();
+    await user.dblClick(screen.getByText('first'));
+    expect(onMinimizedChange).toHaveBeenCalledWith(true);
+  });
+
+  test('the arrows still step through the files', async () => {
+    const { onNavigate, user } = renderMinimizable(true);
+    expect(screen.queryByText('src/a.ts')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(onNavigate).toHaveBeenLastCalledWith(1);
+    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+  });
+
+  test('clicking Next twice quickly steps twice instead of minimizing', async () => {
+    const { onNavigate, onMinimizedChange, user } = renderMinimizable();
+
+    await user.dblClick(screen.getByRole('button', { name: 'Next' }));
+    expect(onMinimizedChange).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenLastCalledWith(2);
   });
 });
 

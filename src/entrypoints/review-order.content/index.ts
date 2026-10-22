@@ -106,10 +106,11 @@ export default defineContentScript({
 
     async function mountPanel(pr: PullRef, key: string, review: CachedReview) {
       const { fingerprint, items } = review;
-      const [initialIndex, initialPosition, initialSkipViewed, anchors] = await Promise.all([
+      const [initialIndex, initialPosition, initialSkipViewed, initialMinimized, anchors] = await Promise.all([
         loadProgress(pr, fingerprint),
         loadPanelPosition(),
         skipViewed.getValue(),
+        panelMinimized.getValue(),
         Promise.all(items.map((item) => diffAnchorId(item.path))),
       ]);
       const viewedState = viewed;
@@ -132,12 +133,14 @@ export default defineContentScript({
               initialIndex,
               initialPosition,
               initialSkipViewed,
+              initialMinimized,
               status: newStatus,
               isViewed: (index) => viewedState.isViewed(anchors[index]!),
               watchViewed: (onChange) => viewedState.watch(onChange),
               onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
               onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
+              onMinimizedChange: (minimized) => void panelMinimized.setValue(minimized),
               onClose: hide,
             },
           }),
