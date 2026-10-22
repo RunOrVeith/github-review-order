@@ -21,6 +21,8 @@
     /** Where the user last dragged the panel; null keeps it in the bottom-right corner. */
     initialPosition?: PanelPosition | null;
     initialSkipViewed?: boolean;
+    /** Whether the panel starts as just the step and its arrows. */
+    initialMinimized?: boolean;
     status?: PanelStatus;
     /** Whether a step's file is ticked as viewed on the page. */
     isViewed?: (index: number) => boolean;
@@ -30,6 +32,7 @@
     onNavigate: (index: number) => Promise<boolean> | boolean;
     onMove?: (position: PanelPosition) => void;
     onSkipViewedChange?: (skip: boolean) => void;
+    onMinimizedChange?: (minimized: boolean) => void;
     onClose: () => void;
   }
 
@@ -38,22 +41,26 @@
     initialIndex,
     initialPosition = null,
     initialSkipViewed = true,
+    initialMinimized = false,
     status,
     isViewed = () => false,
     watchViewed,
     onNavigate,
     onMove,
     onSkipViewedChange,
+    onMinimizedChange,
     onClose,
   }: Props = $props();
 
-  // The panel owns the current step, position and toggle from here on; the initial props only seed them
+  // The panel owns the current step, position and toggles from here on; the initial props only seed them
   // svelte-ignore state_referenced_locally
   let index = $state(initialIndex);
   // svelte-ignore state_referenced_locally
   let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
   // svelte-ignore state_referenced_locally
   let skipViewed = $state(initialSkipViewed);
+  // svelte-ignore state_referenced_locally
+  let minimized = $state(initialMinimized);
   let missing = $state(false);
   const item = $derived(items[index]);
 
@@ -135,6 +142,15 @@
     onSkipViewedChange?.(skipViewed);
   }
 
+  function toggleMinimized(event: MouseEvent) {
+    // Double-clicking a control, like stepping quickly with Next, isn't meant for the panel
+    if ((event.target as Element).closest('a, button, label, input')) return;
+    minimized = !minimized;
+    // A double-click also selects the word under the pointer
+    getSelection()?.removeAllRanges();
+    onMinimizedChange?.(minimized);
+  }
+
   /** Explains a disabled button when skipping is what disabled it. */
   function allViewedHint(target: number | null, end: boolean, direction: string) {
     return target === null && skipViewed && !end ? `All files ${direction} are viewed` : undefined;
@@ -152,17 +168,42 @@
 
 <svelte:window onresize={() => (viewport = measureViewport())} />
 
+{#snippet previousButton()}
+  <button
+    class="arrow"
+    aria-label="Previous"
+    onclick={() => previous !== null && go(previous)}
+    disabled={previous === null}
+    title={allViewedHint(previous, index === 0, 'before this one') ?? 'Previous file'}
+  >
+    ←
+  </button>
+{/snippet}
+
+{#snippet nextButton()}
+  <button
+    class="arrow"
+    aria-label="Next"
+    onclick={() => next !== null && go(next)}
+    disabled={next === null}
+    title={allViewedHint(next, index === items.length - 1, 'after this one') ?? 'Next file'}
+  >
+    →
+  </button>
+{/snippet}
+
 <aside
   bind:this={panel}
-  class={['panel', { dragging: drag }]}
+  class={['panel', { dragging: drag, minimized }]}
   aria-label="Review order"
   style:left={`${placed.x}px`}
   style:top={`${placed.y}px`}
+  ondblclick={toggleMinimized}
 >
   <header
     role="group"
     aria-label="Drag to move"
-    title="Drag to move"
+    title={minimized ? 'Drag to move, double-click to expand' : 'Drag to move, double-click to minimize'}
     onpointerdown={startDrag}
     onpointermove={moveDrag}
     onpointerup={endDrag}
@@ -174,66 +215,67 @@
         <span class="grip" aria-hidden="true">⠿</span>
         {#if item}{index + 1} / {items.length}{:else}Review order{/if}
       </span>
-      {#if item}
+      {#if item && !minimized}
         <label class="skip-viewed">
           <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
           Skip viewed
         </label>
       {/if}
     </span>
-    <span class="actions">
-      {#if status?.source}
-        <!-- The empty title keeps the header's "Drag to move" from showing over this tooltip -->
-        <span class="source" title="">
-          <a
-            href={status.source.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Where this order is from"
-            aria-describedby="review-order-source"
-          >
-            ?
-          </a>
-          <span id="review-order-source" class="tooltip" role="tooltip">{status.source.text}</span>
+    {#if minimized}
+      {#if item}
+        <span class="arrows">
+          {@render previousButton()}
+          {@render nextButton()}
         </span>
       {/if}
-      <button class="close" aria-label="Close" onclick={onClose}>✕</button>
-    </span>
+    {:else}
+      <span class="actions">
+        {#if status?.source}
+          <!-- The empty title keeps the header's own title from showing over this tooltip -->
+          <span class="source" title="">
+            <a
+              href={status.source.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Where this order is from"
+              aria-describedby="review-order-source"
+            >
+              ?
+            </a>
+            <span id="review-order-source" class="tooltip" role="tooltip">{status.source.text}</span>
+          </span>
+        {/if}
+        <button class="close" aria-label="Close" onclick={onClose}>✕</button>
+      </span>
+    {/if}
   </header>
-  {#if item}
-    <code class="path">{item.path}</code>
-    {#if item.description}
-      <p class="description">{item.description}</p>
-    {/if}
-    {#if missing}
-      <p class="warning">File not found in this PR</p>
-    {/if}
-  {/if}
-  {#if status?.reviewProblem}
-    <p class="warning" role="status">{status.reviewProblem}</p>
-  {/if}
-  {#if status?.treeProblem}
-    <p class="warning" role="status">{status.treeProblem}</p>
-  {/if}
 
-  {#if item}
-    <nav>
-      <button
-        onclick={() => previous !== null && go(previous)}
-        disabled={previous === null}
-        title={allViewedHint(previous, index === 0, 'before this one')}
-      >
-        Previous
-      </button>
-      <button onclick={() => go(index)}>Reset current</button>
-      <button
-        onclick={() => next !== null && go(next)}
-        disabled={next === null}
-        title={allViewedHint(next, index === items.length - 1, 'after this one')}
-      >
-        Next
-      </button>
-    </nav>
+  <!-- Minimized, the header with the step and its arrows is all there is -->
+  {#if !minimized}
+    {#if item}
+      <code class="path">{item.path}</code>
+      {#if item.description}
+        <p class="description">{item.description}</p>
+      {/if}
+      {#if missing}
+        <p class="warning">File not found in this PR</p>
+      {/if}
+    {/if}
+    {#if status?.reviewProblem}
+      <p class="warning" role="status">{status.reviewProblem}</p>
+    {/if}
+    {#if status?.treeProblem}
+      <p class="warning" role="status">{status.treeProblem}</p>
+    {/if}
+
+    {#if item}
+      <nav>
+        {@render previousButton()}
+        <button class="reset" onclick={() => go(index)}>Reset current</button>
+        {@render nextButton()}
+      </nav>
+    {/if}
   {/if}
 </aside>
 
@@ -404,8 +446,31 @@
     cursor: pointer;
   }
 
-  nav button {
+  nav .reset {
     flex: 1;
+  }
+
+  .arrow {
+    padding: 2px 10px;
+    font-size: 14px;
+    line-height: 18px;
+  }
+
+  .arrows {
+    display: flex;
+    gap: 4px;
+  }
+
+  /* Just the header: the step and its arrows, sized to fit them */
+  .minimized {
+    width: auto;
+    padding: 6px 8px;
+  }
+
+  .minimized header {
+    gap: 12px;
+    margin: -6px -8px;
+    padding: 6px 8px;
   }
 
   button:disabled {

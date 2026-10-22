@@ -26,6 +26,9 @@ export const DEFAULT_PANEL_POSITION: PanelPosition = {
 // Shared by all PRs so the panel stays wherever it was last put
 export const panelPosition = storage.defineItem<PanelPosition>('local:panelAnchor');
 
+/** Whether the panel is shrunk to its step and arrows; shared by all PRs like its position. */
+export const panelMinimized = storage.defineItem<boolean>('local:panelMinimized', { fallback: false });
+
 /** Where the panel was last put, if anywhere. A position that can't be read, e.g. from an older version, is removed. */
 export async function loadPanelPosition(): Promise<PanelPosition | null> {
   const saved: unknown = await panelPosition.getValue();

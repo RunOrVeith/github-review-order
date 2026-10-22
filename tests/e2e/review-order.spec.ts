@@ -346,3 +346,37 @@ test('keeps its corner when the window is resized', async ({ context, page }) =>
   await page.setViewportSize({ width: 1600, height: 900 });
   await expect.poll(distanceToCorner).toEqual(original);
 });
+
+test('a double-click minimizes the panel into its corner, and it stays that way', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(FILES_URL);
+  const panel = page.getByRole('complementary', { name: 'Review order' });
+  const handle = page.getByRole('group', { name: 'Drag to move' });
+  const expanded = (await panel.boundingBox())!;
+
+  await handle.dblclick();
+  await expect(panel.getByText(first!.description)).toHaveCount(0);
+  // Still in the bottom-right corner; the new size is only measured on the next frame
+  const corner = async () => {
+    const box = (await panel.boundingBox())!;
+    return { right: Math.round(box.x + box.width), bottom: Math.round(box.y + box.height) };
+  };
+  await expect
+    .poll(corner)
+    .toEqual({ right: Math.round(expanded.x + expanded.width), bottom: Math.round(expanded.y + expanded.height) });
+  const minimized = (await panel.boundingBox())!;
+  expect(minimized.width).toBeLessThan(expanded.width);
+  expect(minimized.height).toBeLessThan(expanded.height);
+
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+  await expect(page).toHaveURL(`${FILES_URL}#${anchorId(second!.path)}`);
+
+  await page.reload();
+  await expect(panel.getByText('2 / 3')).toBeVisible();
+  await expect(panel.getByText(second!.description)).toHaveCount(0);
+
+  // Minimized, the step is what's left to double-click besides the arrows
+  await panel.getByText('2 / 3').dblclick();
+  await expect(panel.getByText(second!.description)).toBeVisible();
+});
