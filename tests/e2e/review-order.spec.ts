@@ -354,7 +354,8 @@ test('a double-click minimizes the panel into its corner, and it stays that way'
   const handle = page.getByRole('group', { name: 'Drag to move' });
   const expanded = (await panel.boundingBox())!;
 
-  await handle.dblclick();
+  // The middle of the header is taken by its toggles
+  await handle.getByText('1 / 3').dblclick();
   await expect(panel.getByText(first!.description)).toHaveCount(0);
   // Still in the bottom-right corner; the new size is only measured on the next frame
   const corner = async () => {

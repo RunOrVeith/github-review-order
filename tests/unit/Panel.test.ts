@@ -252,24 +252,36 @@ describe('skip viewed', () => {
     { path: 'src/d.ts', description: 'fourth' },
   ];
 
-  function renderSkipping({ viewed = new Set<number>(), initialIndex = 0, initialSkipViewed = true } = {}) {
-    let notify = () => {};
+  function renderSkipping({
+    viewed = new Set<number>(),
+    initialIndex = 0,
+    initialSkipViewed = true,
+    initialAutoAdvance = false,
+  } = {}) {
+    const listeners = new Set<() => void>();
     const onNavigate = vi.fn(() => true);
     const onSkipViewedChange = vi.fn();
+    const onAutoAdvanceChange = vi.fn();
     render(Panel, {
       items: files,
       initialIndex,
       initialSkipViewed,
+      initialAutoAdvance,
       isViewed: (index: number) => viewed.has(index),
       watchViewed: (onChange: () => void) => {
-        notify = onChange;
-        return () => {};
+        listeners.add(onChange);
+        return () => listeners.delete(onChange);
       },
       onNavigate,
       onSkipViewedChange,
+      onAutoAdvanceChange,
       onClose: () => {},
     });
-    return { onNavigate, onSkipViewedChange, notify: () => notify(), user: userEvent.setup() };
+    const notify = async () => {
+      for (const listener of listeners) listener();
+      await tick();
+    };
+    return { onNavigate, onSkipViewedChange, onAutoAdvanceChange, listeners, notify, user: userEvent.setup() };
   }
 
   const button = (name: string) => screen.getByRole('button', { name });
@@ -326,17 +338,19 @@ describe('skip viewed', () => {
 
   test('stops listening once unmounted', async () => {
     const unwatch = vi.fn();
+    const watchViewed = vi.fn(() => unwatch);
     const { unmount } = render(Panel, {
       items: files,
       initialIndex: 0,
-      watchViewed: () => unwatch,
+      watchViewed,
       onNavigate: () => true,
       onClose: () => {},
     });
+    expect(watchViewed).toHaveBeenCalled();
 
     unmount();
     await tick();
-    expect(unwatch).toHaveBeenCalledOnce();
+    expect(unwatch).toHaveBeenCalledTimes(watchViewed.mock.calls.length);
   });
 
   test('follows files being unticked on the page', async () => {
@@ -345,10 +359,123 @@ describe('skip viewed', () => {
     expect(button('Next')).toBeDisabled();
 
     viewed.delete(3);
-    notify();
-    await tick();
+    await notify();
 
     expect(button('Next')).toBeEnabled();
+  });
+
+  describe('auto-advance', () => {
+    const toggle = () => screen.getByRole('checkbox', { name: 'Auto-advance' });
+
+    test('is on by default', () => {
+      render(Panel, { items: files, initialIndex: 0, onNavigate: () => true, onClose: () => {} });
+      expect(toggle()).toBeChecked();
+    });
+
+    test('moves on once the current file is ticked', async () => {
+      const viewed = new Set<number>();
+      const { onNavigate, notify } = renderSkipping({ viewed, initialAutoAdvance: true });
+
+      viewed.add(0);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(1);
+      expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    });
+
+    test('jumps over viewed files when skipping them', async () => {
+      const viewed = new Set([1, 2]);
+      const { onNavigate, notify } = renderSkipping({ viewed, initialAutoAdvance: true });
+
+      viewed.add(0);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(3);
+    });
+
+    test('goes to the very next file when not skipping viewed ones', async () => {
+      const viewed = new Set([1, 2]);
+      const { onNavigate, notify } = renderSkipping({ viewed, initialAutoAdvance: true, initialSkipViewed: false });
+
+      viewed.add(0);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(1);
+    });
+
+    test('ignores other files being ticked', async () => {
+      const viewed = new Set<number>();
+      const { onNavigate, notify } = renderSkipping({ viewed, initialAutoAdvance: true });
+
+      viewed.add(2);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(0);
+      expect(screen.getByText('1 / 4')).toBeInTheDocument();
+    });
+
+    test('stays on a file that was already viewed when it was opened', async () => {
+      const viewed = new Set([1]);
+      const { onNavigate, notify, user } = renderSkipping({ viewed, initialIndex: 1, initialAutoAdvance: true });
+
+      await user.click(button('Reset current'));
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(1);
+      expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    });
+
+    test('moves on after a viewed file is unticked and ticked again', async () => {
+      const viewed = new Set([1]);
+      const { onNavigate, notify } = renderSkipping({ viewed, initialIndex: 1, initialAutoAdvance: true });
+
+      viewed.delete(1);
+      await notify();
+      expect(onNavigate).toHaveBeenLastCalledWith(1);
+
+      viewed.add(1);
+      await notify();
+      expect(onNavigate).toHaveBeenLastCalledWith(2);
+    });
+
+    test('stays when nothing unviewed is left after the current file', async () => {
+      const viewed = new Set([2, 3]);
+      const { onNavigate, notify } = renderSkipping({ viewed, initialIndex: 1, initialAutoAdvance: true });
+
+      viewed.add(1);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(1);
+      expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    });
+
+    test('turning it off stops moving on and stops listening', async () => {
+      const viewed = new Set<number>();
+      const { onNavigate, onAutoAdvanceChange, listeners, notify, user } = renderSkipping({
+        viewed,
+        initialAutoAdvance: true,
+      });
+      const listening = listeners.size;
+
+      await user.click(toggle());
+      expect(onAutoAdvanceChange).toHaveBeenCalledWith(false);
+      expect(listeners.size).toBe(listening - 1);
+
+      viewed.add(0);
+      await notify();
+      expect(onNavigate).toHaveBeenLastCalledWith(0);
+    });
+
+    test('turning it on does not count a file that is already viewed as just ticked', async () => {
+      const viewed = new Set([0]);
+      const { onNavigate, onAutoAdvanceChange, notify, user } = renderSkipping({ viewed });
+
+      await user.click(toggle());
+      expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);
+      await notify();
+
+      expect(onNavigate).toHaveBeenLastCalledWith(0);
+    });
   });
 });
 
@@ -371,7 +498,7 @@ describe('minimizing', () => {
     expect(screen.getByText('1 / 3')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
-    for (const gone of ['src/a.ts', 'first', 'Skip viewed']) expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    for (const gone of ['src/a.ts', 'first', 'Skip viewed', 'Auto-advance']) expect(screen.queryByText(gone)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reset current' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
 
@@ -404,9 +531,17 @@ describe('minimizing', () => {
   });
 });
 
-test('the skip viewed toggle in the header does not start a drag', async () => {
+test.each([
+  ['Skip viewed', 'Next and Previous jump over files marked as viewed'],
+  ['Auto-advance', 'Go to the next file once this one is marked as viewed'],
+])('the %s toggle explains itself on hover', (name, explanation) => {
+  render(Panel, { items, initialIndex: 0, onNavigate: () => true, onClose: () => {} });
+  expect(screen.getByRole('checkbox', { name })).toHaveAccessibleDescription(explanation);
+});
+
+test.each(['Skip viewed', 'Auto-advance'])('the %s toggle in the header does not start a drag', async (name) => {
   const { onMove } = renderDraggable();
-  const toggle = screen.getByRole('checkbox', { name: 'Skip viewed' });
+  const toggle = screen.getByRole('checkbox', { name });
 
   await fireEvent.pointerDown(toggle, { button: 0, clientX: 10, clientY: 10 });
   await fireEvent.pointerMove(toggle, { buttons: 1, clientX: 110, clientY: 60 });

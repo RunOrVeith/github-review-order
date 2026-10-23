@@ -106,13 +106,15 @@ export default defineContentScript({
 
     async function mountPanel(pr: PullRef, key: string, review: CachedReview) {
       const { fingerprint, items } = review;
-      const [initialIndex, initialPosition, initialSkipViewed, initialMinimized, anchors] = await Promise.all([
-        loadProgress(pr, fingerprint),
-        loadPanelPosition(),
-        skipViewed.getValue(),
-        panelMinimized.getValue(),
-        Promise.all(items.map((item) => diffAnchorId(item.path))),
-      ]);
+      const [initialIndex, initialPosition, initialSkipViewed, initialAutoAdvance, initialMinimized, anchors] =
+        await Promise.all([
+          loadProgress(pr, fingerprint),
+          loadPanelPosition(),
+          skipViewed.getValue(),
+          autoAdvance.getValue(),
+          panelMinimized.getValue(),
+          Promise.all(items.map((item) => diffAnchorId(item.path))),
+        ]);
       const viewedState = viewed;
       if (active?.key !== key || !viewedState) return;
 
@@ -133,6 +135,7 @@ export default defineContentScript({
               initialIndex,
               initialPosition,
               initialSkipViewed,
+              initialAutoAdvance,
               initialMinimized,
               status: newStatus,
               isViewed: (index) => viewedState.isViewed(anchors[index]!),
@@ -140,6 +143,7 @@ export default defineContentScript({
               onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
               onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
+              onAutoAdvanceChange: (advance) => void autoAdvance.setValue(advance),
               onMinimizedChange: (minimized) => void panelMinimized.setValue(minimized),
               onClose: hide,
             },

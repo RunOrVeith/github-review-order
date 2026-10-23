@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { createSubscriber } from 'svelte/reactivity';
   import {
     anchorPanel,
@@ -21,6 +21,8 @@
     /** Where the user last dragged the panel; null keeps it in the bottom-right corner. */
     initialPosition?: PanelPosition | null;
     initialSkipViewed?: boolean;
+    /** Whether ticking the current file as viewed moves on to the next one. */
+    initialAutoAdvance?: boolean;
     /** Whether the panel starts as just the step and its arrows. */
     initialMinimized?: boolean;
     status?: PanelStatus;
@@ -32,6 +34,7 @@
     onNavigate: (index: number) => Promise<boolean> | boolean;
     onMove?: (position: PanelPosition) => void;
     onSkipViewedChange?: (skip: boolean) => void;
+    onAutoAdvanceChange?: (advance: boolean) => void;
     onMinimizedChange?: (minimized: boolean) => void;
     onClose: () => void;
   }
@@ -41,6 +44,7 @@
     initialIndex,
     initialPosition = null,
     initialSkipViewed = true,
+    initialAutoAdvance = true,
     initialMinimized = false,
     status,
     isViewed = () => false,
@@ -48,6 +52,7 @@
     onNavigate,
     onMove,
     onSkipViewedChange,
+    onAutoAdvanceChange,
     onMinimizedChange,
     onClose,
   }: Props = $props();
@@ -59,6 +64,8 @@
   let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
   // svelte-ignore state_referenced_locally
   let skipViewed = $state(initialSkipViewed);
+  // svelte-ignore state_referenced_locally
+  let autoAdvance = $state(initialAutoAdvance);
   // svelte-ignore state_referenced_locally
   let minimized = $state(initialMinimized);
   let missing = $state(false);
@@ -73,6 +80,25 @@
   const previous = $derived(findStep(index, -1, items.length, skip));
   const next = $derived(findStep(index, 1, items.length, skip));
 
+  // Whether the current step's file was viewed when last looked at, so only ticking it moves on
+  let currentViewed = false;
+  function advanceOnViewed() {
+    const viewed = isViewed(index);
+    const ticked = viewed && !currentViewed;
+    currentViewed = viewed;
+    if (!ticked) return;
+    // Computed here because `next` may not have seen this change yet
+    const target = findStep(index, 1, items.length, skip);
+    if (target !== null) void go(target);
+  }
+  // Listens to the viewed states the panel already watches, and only while it's on
+  $effect(() => {
+    if (!autoAdvance || items.length === 0 || !watchViewed) return;
+    // A file that was viewed before turning this on doesn't count as just ticked
+    currentViewed = untrack(() => isViewed(index));
+    return watchViewed(advanceOnViewed);
+  });
+
   let panel: HTMLElement;
   let size = $state<Size>({ width: 0, height: 0 });
   let viewport = $state(measureViewport());
@@ -84,6 +110,7 @@
 
   async function go(target: number) {
     index = target;
+    currentViewed = isViewed(target);
     const found = await onNavigate(target);
     // Another step may have been picked while this one was loading
     if (index === target) missing = !found;
@@ -142,6 +169,11 @@
     onSkipViewedChange?.(skipViewed);
   }
 
+  function toggleAutoAdvance(event: Event) {
+    autoAdvance = (event.currentTarget as HTMLInputElement).checked;
+    onAutoAdvanceChange?.(autoAdvance);
+  }
+
   function toggleMinimized(event: MouseEvent) {
     // Double-clicking a control, like stepping quickly with Next, isn't meant for the panel
     if ((event.target as Element).closest('a, button, label, input')) return;
@@ -180,6 +212,17 @@
   </button>
 {/snippet}
 
+{#snippet toggle(label: string, hint: string, id: string, checked: boolean, onchange: (event: Event) => void)}
+  <!-- The empty title keeps the header's own title from showing over this tooltip -->
+  <span class="hint" title="">
+    <label class="toggle">
+      <input type="checkbox" {checked} {onchange} aria-describedby={id} />
+      {label}
+    </label>
+    <span {id} class="tooltip" role="tooltip">{hint}</span>
+  </span>
+{/snippet}
+
 {#snippet nextButton()}
   <button
     class="arrow"
@@ -216,10 +259,22 @@
         {#if item}{index + 1} / {items.length}{:else}Review order{/if}
       </span>
       {#if item && !minimized}
-        <label class="skip-viewed">
-          <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
-          Skip viewed
-        </label>
+        <span class="toggles">
+          {@render toggle(
+            'Skip viewed',
+            'Next and Previous jump over files marked as viewed',
+            'review-order-skip-viewed',
+            skipViewed,
+            toggleSkipViewed,
+          )}
+          {@render toggle(
+            'Auto-advance',
+            'Go to the next file once this one is marked as viewed',
+            'review-order-auto-advance',
+            autoAdvance,
+            toggleAutoAdvance,
+          )}
+        </span>
       {/if}
     </span>
     {#if minimized}
@@ -233,7 +288,7 @@
       <span class="actions">
         {#if status?.source}
           <!-- The empty title keeps the header's own title from showing over this tooltip -->
-          <span class="source" title="">
+          <span class="source hint" title="">
             <a
               href={status.source.href}
               target="_blank"
@@ -335,6 +390,8 @@
   }
 
   header {
+    /* Tooltips are placed below it */
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -365,8 +422,7 @@
     gap: 4px;
   }
 
-  .source {
-    position: relative;
+  .hint {
     display: flex;
   }
 
@@ -390,25 +446,30 @@
     color: var(--link);
   }
 
-  /* Below the icon, inside the panel, which is always fully on screen */
+  /* Below the header and centered in the panel, which is always fully on screen, wrapping when too long */
   .tooltip {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    right: 12px;
+    left: 12px;
     z-index: 1;
+    width: max-content;
+    max-width: calc(100% - 24px);
+    margin: 0 auto;
+    box-sizing: border-box;
     padding: 4px 8px;
     border-radius: 6px;
     background: var(--tooltip-bg);
     color: var(--tooltip-fg);
     font-size: 12px;
     line-height: 1.4;
-    white-space: nowrap;
+    text-align: center;
     pointer-events: none;
     visibility: hidden;
   }
 
-  .source:hover .tooltip,
-  .source a:focus-visible + .tooltip {
+  .hint:hover .tooltip,
+  .hint:has(:focus-visible) .tooltip {
     visibility: visible;
   }
 
@@ -491,7 +552,12 @@
     gap: 12px;
   }
 
-  .skip-viewed {
+  .toggles {
+    display: flex;
+    gap: 8px;
+  }
+
+  .toggle {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -500,7 +566,7 @@
     cursor: pointer;
   }
 
-  .skip-viewed input {
+  .toggle input {
     margin: 0;
     accent-color: var(--accent);
   }
