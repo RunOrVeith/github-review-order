@@ -347,7 +347,7 @@ test('keeps its corner when the window is resized', async ({ context, page }) =>
   await expect.poll(distanceToCorner).toEqual(original);
 });
 
-test('a double-click minimizes the panel into its corner, and it stays that way', async ({ context, page }) => {
+test('a double-click minimizes the panel under the pointer, and it stays that way', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
@@ -357,14 +357,13 @@ test('a double-click minimizes the panel into its corner, and it stays that way'
   // The middle of the header is taken by its toggles
   await handle.getByText('1 / 3').dblclick();
   await expect(panel.getByText(first!.description)).toHaveCount(0);
-  // Still in the bottom-right corner; the new size is only measured on the next frame
+  // Shrinks toward its top-left corner, so the header stays where it was double-clicked
   const corner = async () => {
     const box = (await panel.boundingBox())!;
-    return { right: Math.round(box.x + box.width), bottom: Math.round(box.y + box.height) };
+    return { left: Math.round(box.x), top: Math.round(box.y) };
   };
-  await expect
-    .poll(corner)
-    .toEqual({ right: Math.round(expanded.x + expanded.width), bottom: Math.round(expanded.y + expanded.height) });
+  const topLeft = { left: Math.round(expanded.x), top: Math.round(expanded.y) };
+  await expect.poll(corner).toEqual(topLeft);
   const minimized = (await panel.boundingBox())!;
   expect(minimized.width).toBeLessThan(expanded.width);
   expect(minimized.height).toBeLessThan(expanded.height);
@@ -376,8 +375,12 @@ test('a double-click minimizes the panel into its corner, and it stays that way'
   await page.reload();
   await expect(panel.getByText('2 / 3')).toBeVisible();
   await expect(panel.getByText(second!.description)).toHaveCount(0);
+  // "2 / 3" is a little wider than "1 / 3", so only the top is exactly where it was
+  const top = async () => Math.round((await panel.boundingBox())!.y);
+  await expect.poll(top).toBe(topLeft.top);
 
-  // Minimized, the step is what's left to double-click besides the arrows
+  // Minimized, the step is what's left to double-click besides the arrows. It grows downward again.
   await panel.getByText('2 / 3').dblclick();
   await expect(panel.getByText(second!.description)).toBeVisible();
+  await expect.poll(top).toBe(topLeft.top);
 });

@@ -122,9 +122,18 @@
     return { width: clientWidth, height: clientHeight };
   }
 
+  // Set while minimizing or expanding pins the panel's top-left corner, until its new size is known
+  let resizing = false;
+
   function measureSize() {
     const rect = panel.getBoundingClientRect();
     size = { width: rect.width, height: rect.height };
+    if (!resizing) return;
+
+    // Back to the closest edges, so it keeps its corner when the window is resized
+    resizing = false;
+    position = anchorPanel(placePanel(position, size, viewport), size, viewport);
+    onMove?.(position);
   }
 
   function startDrag(event: PointerEvent) {
@@ -177,6 +186,9 @@
   function toggleMinimized(event: MouseEvent) {
     // Double-clicking a control, like stepping quickly with Next, isn't meant for the panel
     if ((event.target as Element).closest('a, button, label, input')) return;
+    // Shrinks and grows from the top-left corner, so the header stays under the pointer
+    position = { horizontal: { edge: 'left', offset: placed.x }, vertical: { edge: 'top', offset: placed.y } };
+    resizing = true;
     minimized = !minimized;
     // A double-click also selects the word under the pointer
     getSelection()?.removeAllRanges();
