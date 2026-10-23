@@ -536,8 +536,7 @@ test.each([
   ['Auto-advance', 'Go to the next file once this one is marked as viewed'],
 ])('the %s toggle explains itself on hover', (name, explanation) => {
   render(Panel, { items, initialIndex: 0, onNavigate: () => true, onClose: () => {} });
-  // On the label, so it also shows instead of the header's drag hint
-  expect(screen.getByRole('checkbox', { name }).closest('label')).toHaveAttribute('title', explanation);
+  expect(screen.getByRole('checkbox', { name })).toHaveAccessibleDescription(explanation);
 });
 
 test.each(['Skip viewed', 'Auto-advance'])('the %s toggle in the header does not start a drag', async (name) => {

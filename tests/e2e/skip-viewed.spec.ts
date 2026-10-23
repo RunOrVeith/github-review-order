@@ -141,3 +141,19 @@ test('auto-advance can be turned off and stays off', async ({ context, page }) =
   await page.reload();
   await expect(panel(page).getByRole('checkbox', { name: 'Auto-advance' })).not.toBeChecked();
 });
+
+test('the toggles explain themselves on hover', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(CHANGES_URL);
+  const tooltip = panel(page).getByRole('tooltip');
+  await expect(tooltip).toBeHidden();
+
+  await panel(page).getByText('Skip viewed').hover();
+  await expect(tooltip).toHaveText('Next and Previous jump over files marked as viewed');
+  await panel(page).getByText('Auto-advance').hover();
+  await expect(tooltip).toHaveText('Go to the next file once this one is marked as viewed');
+  // Inside the panel, so it's never cut off at the edge of the window
+  const [outer, inner] = [(await panel(page).boundingBox())!, (await tooltip.boundingBox())!];
+  expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+});

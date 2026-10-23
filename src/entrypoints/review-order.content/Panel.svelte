@@ -212,6 +212,17 @@
   </button>
 {/snippet}
 
+{#snippet toggle(label: string, hint: string, id: string, checked: boolean, onchange: (event: Event) => void)}
+  <!-- The empty title keeps the header's own title from showing over this tooltip -->
+  <span class="hint" title="">
+    <label class="toggle">
+      <input type="checkbox" {checked} {onchange} aria-describedby={id} />
+      {label}
+    </label>
+    <span {id} class="tooltip" role="tooltip">{hint}</span>
+  </span>
+{/snippet}
+
 {#snippet nextButton()}
   <button
     class="arrow"
@@ -249,14 +260,20 @@
       </span>
       {#if item && !minimized}
         <span class="toggles">
-          <label class="toggle" title="Next and Previous jump over files marked as viewed">
-            <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
-            Skip viewed
-          </label>
-          <label class="toggle" title="Go to the next file once this one is marked as viewed">
-            <input type="checkbox" checked={autoAdvance} onchange={toggleAutoAdvance} />
-            Auto-advance
-          </label>
+          {@render toggle(
+            'Skip viewed',
+            'Next and Previous jump over files marked as viewed',
+            'review-order-skip-viewed',
+            skipViewed,
+            toggleSkipViewed,
+          )}
+          {@render toggle(
+            'Auto-advance',
+            'Go to the next file once this one is marked as viewed',
+            'review-order-auto-advance',
+            autoAdvance,
+            toggleAutoAdvance,
+          )}
         </span>
       {/if}
     </span>
@@ -271,7 +288,7 @@
       <span class="actions">
         {#if status?.source}
           <!-- The empty title keeps the header's own title from showing over this tooltip -->
-          <span class="source" title="">
+          <span class="source hint" title="">
             <a
               href={status.source.href}
               target="_blank"
@@ -373,6 +390,8 @@
   }
 
   header {
+    /* Tooltips are placed below it */
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -403,8 +422,7 @@
     gap: 4px;
   }
 
-  .source {
-    position: relative;
+  .hint {
     display: flex;
   }
 
@@ -428,25 +446,30 @@
     color: var(--link);
   }
 
-  /* Below the icon, inside the panel, which is always fully on screen */
+  /* Below the header and centered in the panel, which is always fully on screen, wrapping when too long */
   .tooltip {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    right: 12px;
+    left: 12px;
     z-index: 1;
+    width: max-content;
+    max-width: calc(100% - 24px);
+    margin: 0 auto;
+    box-sizing: border-box;
     padding: 4px 8px;
     border-radius: 6px;
     background: var(--tooltip-bg);
     color: var(--tooltip-fg);
     font-size: 12px;
     line-height: 1.4;
-    white-space: nowrap;
+    text-align: center;
     pointer-events: none;
     visibility: hidden;
   }
 
-  .source:hover .tooltip,
-  .source a:focus-visible + .tooltip {
+  .hint:hover .tooltip,
+  .hint:has(:focus-visible) .tooltip {
     visibility: visible;
   }
 
