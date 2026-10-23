@@ -347,27 +347,30 @@ test('keeps its corner when the window is resized', async ({ context, page }) =>
   await expect.poll(distanceToCorner).toEqual(original);
 });
 
-test('a double-click minimizes the panel into its corner, and it stays that way', async ({ context, page }) => {
+test('a double-click minimizes the panel under the pointer, and it stays that way', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
   const handle = page.getByRole('group', { name: 'Drag to move' });
-  const expanded = (await panel.boundingBox())!;
+  const box = async () => {
+    const { x, y, width, height } = (await panel.boundingBox())!;
+    return { left: Math.round(x), top: Math.round(y), width: Math.round(width), height: Math.round(height) };
+  };
+  const expanded = await box();
 
-  // The middle of the header is taken by its toggles
+  // Shrinks toward its top-left corner and grows back down from it, so the header stays under the pointer.
+  // The new size is only measured on the next frame, so wait for the layout to settle.
   await handle.getByText('1 / 3').dblclick();
   await expect(panel.getByText(first!.description)).toHaveCount(0);
-  // Still in the bottom-right corner; the new size is only measured on the next frame
-  const corner = async () => {
-    const box = (await panel.boundingBox())!;
-    return { right: Math.round(box.x + box.width), bottom: Math.round(box.y + box.height) };
-  };
-  await expect
-    .poll(corner)
-    .toEqual({ right: Math.round(expanded.x + expanded.width), bottom: Math.round(expanded.y + expanded.height) });
-  const minimized = (await panel.boundingBox())!;
+  await expect.poll(box).toMatchObject({ left: expanded.left, top: expanded.top });
+  const minimized = await box();
   expect(minimized.width).toBeLessThan(expanded.width);
   expect(minimized.height).toBeLessThan(expanded.height);
+
+  await handle.getByText('1 / 3').dblclick();
+  await expect.poll(box).toEqual(expanded);
+  await handle.getByText('1 / 3').dblclick();
+  await expect.poll(box).toEqual(minimized);
 
   await panel.getByRole('button', { name: 'Next' }).click();
   await expect(panel.getByText('2 / 3')).toBeVisible();
@@ -376,6 +379,8 @@ test('a double-click minimizes the panel into its corner, and it stays that way'
   await page.reload();
   await expect(panel.getByText('2 / 3')).toBeVisible();
   await expect(panel.getByText(second!.description)).toHaveCount(0);
+  // "2 / 3" is a little wider than "1 / 3", so only the top is exactly where it was
+  await expect.poll(async () => (await box()).top).toBe(minimized.top);
 
   // Minimized, the step is what's left to double-click besides the arrows
   await panel.getByText('2 / 3').dblclick();

@@ -452,7 +452,12 @@ describe('skip viewed', () => {
 
     test('stays on a file that was already viewed when it was opened', async () => {
       const viewed = new Set([1]);
-      const { onNavigate, notify, user } = renderSkipping({ viewed, initialIndex: 1, initialAutoAdvance: true });
+      const { onNavigate, notify, user } = renderSkipping({
+        viewed,
+        initialIndex: 1,
+        initialAutoAdvance: true,
+        initialSkipViewed: false,
+      });
 
       await user.click(button('Reset current'));
       await notify();
@@ -463,7 +468,12 @@ describe('skip viewed', () => {
 
     test('moves on after a viewed file is unticked and ticked again', async () => {
       const viewed = new Set([1]);
-      const { onNavigate, notify } = renderSkipping({ viewed, initialIndex: 1, initialAutoAdvance: true });
+      const { onNavigate, notify } = renderSkipping({
+        viewed,
+        initialIndex: 1,
+        initialAutoAdvance: true,
+        initialSkipViewed: false,
+      });
 
       viewed.delete(1);
       await notify();
@@ -504,7 +514,7 @@ describe('skip viewed', () => {
 
     test('turning it on does not count a file that is already viewed as just ticked', async () => {
       const viewed = new Set([0]);
-      const { onNavigate, onAutoAdvanceChange, notify, user } = renderSkipping({ viewed });
+      const { onNavigate, onAutoAdvanceChange, notify, user } = renderSkipping({ viewed, initialSkipViewed: false });
 
       await user.click(toggle());
       expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);

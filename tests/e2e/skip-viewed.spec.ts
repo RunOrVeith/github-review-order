@@ -91,13 +91,17 @@ test('re-reads viewed states after a push and GitHub refresh', async ({ context,
   const pr = await servePullRequest(context);
   await page.goto(CHANGES_URL);
   await expect(panel(page).getByText('1 / 3')).toBeVisible();
+  // Unlike GitHub, the fixture doesn't re-render files after a refresh, so the second one renders as still ticked
+  // once navigated to, which auto-advance would take for the user ticking it
+  await panel(page).getByRole('checkbox', { name: 'Auto-advance' }).uncheck();
 
   // The push changed the second file, so GitHub unticked it; the page's embedded data still says viewed
   pr.headSha = 'b'.repeat(40);
   pr.viewed = new Set();
-  const refetch = page.waitForResponse(CHANGES_URL);
+  const outdated = await page.locator('review-order-panel').elementHandle();
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await refetch;
+  // The new push rebuilds the panel once the viewed states are re-read; a click before that hits the old one
+  await expect.poll(() => outdated!.evaluate((host) => host.isConnected)).toBe(false);
 
   await panel(page).getByRole('button', { name: 'Next' }).click();
   await expect(panel(page).getByText('2 / 3')).toBeVisible();
