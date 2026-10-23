@@ -161,7 +161,8 @@
     // Keeps the panel inside the viewport when its content changes height
     const observer = new ResizeObserver(measureSize);
     observer.observe(panel);
-    if (item) void go(index);
+    // Where the user left off, unless that file has been viewed since; then the first one still to review
+    if (item) void go(skip(index) ? (findStep(-1, 1, items.length, skip) ?? index) : index);
     return () => observer.disconnect();
   });
 </script>
