@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { createSubscriber } from 'svelte/reactivity';
   import {
     anchorPanel,
@@ -21,6 +21,8 @@
     /** Where the user last dragged the panel; null keeps it in the bottom-right corner. */
     initialPosition?: PanelPosition | null;
     initialSkipViewed?: boolean;
+    /** Whether ticking the current file as viewed moves on to the next one. */
+    initialAutoAdvance?: boolean;
     /** Whether the panel starts as just the step and its arrows. */
     initialMinimized?: boolean;
     status?: PanelStatus;
@@ -32,6 +34,7 @@
     onNavigate: (index: number) => Promise<boolean> | boolean;
     onMove?: (position: PanelPosition) => void;
     onSkipViewedChange?: (skip: boolean) => void;
+    onAutoAdvanceChange?: (advance: boolean) => void;
     onMinimizedChange?: (minimized: boolean) => void;
     onClose: () => void;
   }
@@ -41,6 +44,7 @@
     initialIndex,
     initialPosition = null,
     initialSkipViewed = true,
+    initialAutoAdvance = true,
     initialMinimized = false,
     status,
     isViewed = () => false,
@@ -48,6 +52,7 @@
     onNavigate,
     onMove,
     onSkipViewedChange,
+    onAutoAdvanceChange,
     onMinimizedChange,
     onClose,
   }: Props = $props();
@@ -59,6 +64,8 @@
   let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
   // svelte-ignore state_referenced_locally
   let skipViewed = $state(initialSkipViewed);
+  // svelte-ignore state_referenced_locally
+  let autoAdvance = $state(initialAutoAdvance);
   // svelte-ignore state_referenced_locally
   let minimized = $state(initialMinimized);
   let missing = $state(false);
@@ -73,6 +80,25 @@
   const previous = $derived(findStep(index, -1, items.length, skip));
   const next = $derived(findStep(index, 1, items.length, skip));
 
+  // Whether the current step's file was viewed when last looked at, so only ticking it moves on
+  let currentViewed = false;
+  function advanceOnViewed() {
+    const viewed = isViewed(index);
+    const ticked = viewed && !currentViewed;
+    currentViewed = viewed;
+    if (!ticked) return;
+    // Computed here because `next` may not have seen this change yet
+    const target = findStep(index, 1, items.length, skip);
+    if (target !== null) void go(target);
+  }
+  // Listens to the viewed states the panel already watches, and only while it's on
+  $effect(() => {
+    if (!autoAdvance || items.length === 0 || !watchViewed) return;
+    // A file that was viewed before turning this on doesn't count as just ticked
+    currentViewed = untrack(() => isViewed(index));
+    return watchViewed(advanceOnViewed);
+  });
+
   let panel: HTMLElement;
   let size = $state<Size>({ width: 0, height: 0 });
   let viewport = $state(measureViewport());
@@ -84,6 +110,7 @@
 
   async function go(target: number) {
     index = target;
+    currentViewed = isViewed(target);
     const found = await onNavigate(target);
     // Another step may have been picked while this one was loading
     if (index === target) missing = !found;
@@ -140,6 +167,11 @@
   function toggleSkipViewed(event: Event) {
     skipViewed = (event.currentTarget as HTMLInputElement).checked;
     onSkipViewedChange?.(skipViewed);
+  }
+
+  function toggleAutoAdvance(event: Event) {
+    autoAdvance = (event.currentTarget as HTMLInputElement).checked;
+    onAutoAdvanceChange?.(autoAdvance);
   }
 
   function toggleMinimized(event: MouseEvent) {
@@ -216,10 +248,16 @@
         {#if item}{index + 1} / {items.length}{:else}Review order{/if}
       </span>
       {#if item && !minimized}
-        <label class="skip-viewed">
-          <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
-          Skip viewed
-        </label>
+        <span class="toggles">
+          <label class="toggle" title="Next and Previous jump over files marked as viewed">
+            <input type="checkbox" checked={skipViewed} onchange={toggleSkipViewed} />
+            Skip viewed
+          </label>
+          <label class="toggle" title="Go to the next file once this one is marked as viewed">
+            <input type="checkbox" checked={autoAdvance} onchange={toggleAutoAdvance} />
+            Auto-advance
+          </label>
+        </span>
       {/if}
     </span>
     {#if minimized}
@@ -491,7 +529,12 @@
     gap: 12px;
   }
 
-  .skip-viewed {
+  .toggles {
+    display: flex;
+    gap: 8px;
+  }
+
+  .toggle {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -500,7 +543,7 @@
     cursor: pointer;
   }
 
-  .skip-viewed input {
+  .toggle input {
     margin: 0;
     accent-color: var(--accent);
   }

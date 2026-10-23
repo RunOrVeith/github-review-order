@@ -114,3 +114,30 @@ test('shows which files are viewed in the file tree', async ({ context, page }) 
   await panel(page).getByRole('button', { name: 'Close' }).click();
   await expect(page.locator('[data-review-order-eye], [data-review-order-viewed]')).toHaveCount(0);
 });
+
+test('ticking the current file moves on to the next unviewed one', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(CHANGES_URL);
+  await expect(panel(page).getByText('1 / 3')).toBeVisible();
+
+  await page.locator(`#${anchorId(first!.path)}`).getByRole('button', { name: 'Not Viewed' }).click();
+
+  await expect(panel(page).getByText('3 / 3')).toBeVisible();
+  await expect(page).toHaveURL(`${CHANGES_URL}#${anchorId(third!.path)}`);
+});
+
+test('auto-advance can be turned off and stays off', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(CHANGES_URL);
+  const toggle = panel(page).getByRole('checkbox', { name: 'Auto-advance' });
+  await expect(toggle).toBeChecked();
+
+  await toggle.uncheck();
+  await page.locator(`#${anchorId(first!.path)}`).getByRole('button', { name: 'Not Viewed' }).click();
+  // The tree's eye follows the same viewed states, so once it shows the tick has been seen
+  await expect(page.locator(`[id="${first!.path}"] [data-review-order-eye]`)).toBeVisible();
+  await expect(panel(page).getByText('1 / 3')).toBeVisible();
+
+  await page.reload();
+  await expect(panel(page).getByRole('checkbox', { name: 'Auto-advance' })).not.toBeChecked();
+});
