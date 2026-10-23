@@ -312,7 +312,10 @@ describe('skip viewed', () => {
   });
 
   test('Reset current stays on a viewed file', async () => {
-    const { onNavigate, user } = renderSkipping({ viewed: new Set([1]), initialIndex: 1 });
+    const viewed = new Set<number>();
+    const { onNavigate, notify, user } = renderSkipping({ viewed, initialIndex: 1 });
+    viewed.add(1);
+    notify();
 
     await user.click(button('Reset current'));
     expect(onNavigate).toHaveBeenLastCalledWith(1);
@@ -351,6 +354,39 @@ describe('skip viewed', () => {
     unmount();
     await tick();
     expect(unwatch).toHaveBeenCalledTimes(watchViewed.mock.calls.length);
+  });
+
+  describe('starting step', () => {
+    test('starts at the first unviewed file when the saved one was viewed since', () => {
+      const { onNavigate } = renderSkipping({ viewed: new Set([0, 2]), initialIndex: 2 });
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(1);
+      expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    });
+
+    test('keeps the saved file while it is unviewed', () => {
+      const { onNavigate } = renderSkipping({ viewed: new Set([1]), initialIndex: 2 });
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(2);
+    });
+
+    test('starts past viewed files at the beginning', () => {
+      const { onNavigate } = renderSkipping({ viewed: new Set([0, 1]) });
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(2);
+    });
+
+    test('keeps the saved file when every file is viewed', () => {
+      const { onNavigate } = renderSkipping({ viewed: new Set([0, 1, 2, 3]), initialIndex: 2 });
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(2);
+    });
+
+    test('keeps the saved file when not skipping viewed ones', () => {
+      const { onNavigate } = renderSkipping({ viewed: new Set([0, 2]), initialIndex: 2, initialSkipViewed: false });
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(2);
+    });
   });
 
   test('follows files being unticked on the page', async () => {

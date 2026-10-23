@@ -28,6 +28,29 @@ test('Next skips viewed files without opening them', async ({ context, page }) =
   await expect(panel(page).getByText('File not found in this PR')).toHaveCount(0);
 });
 
+test('opens at the first unviewed file', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  pr.viewed = new Set([first!.path, second!.path]);
+  await page.goto(CHANGES_URL);
+
+  await expect(panel(page).getByText('3 / 3')).toBeVisible();
+  await expect(page).toHaveURL(`${CHANGES_URL}#${anchorId(third!.path)}`);
+});
+
+test('opens at the first file when not skipping viewed ones', async ({ context, page }) => {
+  const pr = await servePullRequest(context);
+  pr.viewed = new Set([first!.path, second!.path]);
+  await page.goto(CHANGES_URL);
+  await panel(page).getByRole('checkbox', { name: 'Skip viewed' }).uncheck();
+  await panel(page).getByRole('button', { name: 'Previous' }).click();
+  await panel(page).getByRole('button', { name: 'Previous' }).click();
+  await expect(panel(page).getByText('1 / 3')).toBeVisible();
+
+  await page.reload();
+  await expect(panel(page).getByText('1 / 3')).toBeVisible();
+  await expect(page).toHaveURL(`${CHANGES_URL}#${anchorId(first!.path)}`);
+});
+
 test('can be turned off and stays off', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(CHANGES_URL);
