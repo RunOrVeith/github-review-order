@@ -5,8 +5,8 @@ import type { ViewedState } from './viewed';
 import styles from './tree-markers.css?raw';
 
 export interface TreeMarkers {
-  /** Marks the step's file as current and returns whether the tree has it. */
-  setCurrent(index: number): boolean;
+  /** Marks the file as current and returns whether the tree has it. */
+  setCurrent(anchor: string): boolean;
   stop(): void;
 }
 
@@ -15,6 +15,8 @@ export interface TreeMarkerOptions {
   viewed?: Pick<ViewedState, 'isViewed' | 'watch'>;
   /** Called whenever the reason the tree can't show the order changes, with null once it can. */
   onProblem?: (problem: string | null) => void;
+  /** Called whenever more of the PR's files turn out to be missing from the order, with all of them so far. */
+  onUnlisted?: (files: ReviewFile[]) => void;
 }
 
 export const NONE_IN_TREE = "None of the review order's files are in GitHub's file tree.";
@@ -28,7 +30,7 @@ export const UNREADABLE_TREE = "Couldn't read GitHub's file tree, so it doesn't 
 export function createTreeMarkers(
   ctx: ContentScriptContext,
   files: ReviewFile[] | null,
-  { viewed, onProblem = () => {} }: TreeMarkerOptions = {},
+  { viewed, onProblem = () => {}, onUnlisted = () => {} }: TreeMarkerOptions = {},
 ): TreeMarkers {
   const steps = files && reviewSteps(files);
   const keyByAnchor = createAnchorKeys(files ?? [], schedule);
@@ -39,6 +41,8 @@ export function createTreeMarkers(
   // Whether the tree has marks on it, so they're removed once it can't be read anymore
   let marked = false;
   let problem: string | null = null;
+  // Kept once seen, since GitHub doesn't render the files inside collapsed folders
+  const unlisted = new Map<string, ReviewFile>();
   // A navigation still in flight when the panel closes must not mark the tree again
   let stopped = false;
 
@@ -57,9 +61,24 @@ export function createTreeMarkers(
     else if (marked) clearTreeMarks(document);
     marked = matched;
 
-    // Without an order there's no panel to say what's wrong with the tree
-    if (files) report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
+    // Without an order there's no panel to say what's wrong with the tree, and no files it leaves out
+    if (files) {
+      report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
+      if (matched) collectUnlisted(entries);
+    }
     return entries;
+  }
+
+  /** Adds the tree's files the order leaves out, each pass's new ones in the tree's order. */
+  function collectUnlisted(entries: Map<string, HTMLElement>) {
+    if (!steps) return;
+    const added = Array.from(entries)
+      .filter(([anchor]) => !steps.has(anchor) && !unlisted.has(anchor))
+      .sort(([, a], [, b]) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+    if (added.length === 0) return;
+
+    for (const [anchor, entry] of added) unlisted.set(anchor, { path: treeEntryPath(entry), anchor });
+    onUnlisted(Array.from(unlisted.values()));
   }
 
   function schedule() {
@@ -102,11 +121,11 @@ export function createTreeMarkers(
   }
 
   return {
-    setCurrent(index) {
+    setCurrent(anchor) {
       if (stopped) return false;
-      current = files?.[index]?.anchor ?? null;
+      current = anchor;
 
-      const entry = current ? apply().get(current) : undefined;
+      const entry = apply().get(anchor);
       if (entry) scrollTreeTo(entry);
       return entry !== undefined;
     },

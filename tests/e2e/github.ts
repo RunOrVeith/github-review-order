@@ -101,6 +101,17 @@ function conversationPage(pr: { headSha: string; items: ReviewOrder | null; comm
 export const UNLISTED_PATH = 'src/unlisted.ts';
 /** Too long for the sidebar, so it has to truncate before its badge. */
 export const LONG_PATH = 'src/a-very-long-component-name-that-does-not-fit.stories.tsx';
+// Padding the classic tree so its sidebar has to scroll
+const PADDING_PATHS = Array.from({ length: 30 }, (_, i) => `src/padding-${String(i).padStart(2, '0')}.ts`);
+/** The files in the classic tree on /files, in its order. */
+const CLASSIC_TREE_PATHS = ['src/core.ts', 'src/ui.ts', UNLISTED_PATH, LONG_PATH, ...PADDING_PATHS, 'README.md'];
+/** The files on /changes. */
+const CHANGES_PATHS = [...reviewOrder.map((item) => item.path), UNLISTED_PATH];
+
+/** How many steps the panel has on each tab: the order, then the tree's files it leaves out. */
+const stepCount = (paths: string[]) => new Set([...reviewOrder.map((item) => item.path), ...paths]).size;
+export const FILES_STEPS = stepCount(CLASSIC_TREE_PATHS);
+export const CHANGES_STEPS = stepCount(CHANGES_PATHS);
 
 // The basic layout of GitHub's tree, then its active-file indicator rules verbatim from its
 // stylesheet, which use the entries' ::before and ::after
@@ -139,8 +150,7 @@ function fileTree(): string {
       <span data-filterable-item-text hidden>${path}</span>
       <a class="ActionList-content" href="#${anchorId(path)}">${path.split('/').pop()}</a>
     </li>`;
-  const padding = Array.from({ length: 30 }, (_, i) => `src/padding-${String(i).padStart(2, '0')}.ts`);
-  const src = ['src/core.ts', 'src/ui.ts', UNLISTED_PATH, LONG_PATH, ...padding];
+  const src = CLASSIC_TREE_PATHS.filter((path) => path.startsWith('src/'));
 
   return `
     <ul class="ActionList ActionList--tree" role="tree" aria-label="File Tree">
@@ -149,7 +159,7 @@ function fileTree(): string {
         <button class="ActionList-content">src</button>
         <ul class="ActionList ActionList--subGroup" role="group">${src.map(entry).join('')}</ul>
       </li>
-      ${entry('README.md')}
+      ${CLASSIC_TREE_PATHS.filter((path) => !path.startsWith('src/')).map(entry).join('')}
     </ul>`;
 }
 
@@ -160,7 +170,7 @@ function fileTree(): string {
  * `window.navigatedFiles`.
  */
 function changesPage(viewed: Set<string>): string {
-  const files = [...reviewOrder.map((item) => item.path), UNLISTED_PATH];
+  const files = CHANGES_PATHS;
   const diffSummaries = files.map((path) => ({
     changeType: 'MODIFIED',
     markedAsViewed: viewed.has(path),

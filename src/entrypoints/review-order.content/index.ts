@@ -11,6 +11,8 @@ interface Review {
   fingerprint: string;
   /** The files' anchors on the changes page, in review order. */
   anchors: string[];
+  /** Lists the PR's files the order leaves out, which are stepped through after it. */
+  status: PanelStatus;
   markers: TreeMarkers;
   viewed: ViewedState;
 }
@@ -144,7 +146,10 @@ export default defineContentScript({
               initialAutoAdvance,
               initialMinimized,
               status: newStatus,
-              isViewed: (index) => viewedState.isViewed(anchors[index]!),
+              isViewed: (index) => {
+                const anchor = anchorAt(steps, index);
+                return anchor !== undefined && viewedState.isViewed(anchor);
+              },
               watchViewed: (onChange) => viewedState.watch(onChange),
               onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
@@ -172,8 +177,9 @@ export default defineContentScript({
         markers = createTreeMarkers(ctx, files, {
           viewed: viewedState,
           onProblem: (problem) => (newStatus.treeProblem = problem),
+          onUnlisted: (unlisted) => (newStatus.unlisted = unlisted),
         });
-        steps = { pr, fingerprint, anchors, markers, viewed: viewedState };
+        steps = { pr, fingerprint, anchors, status: newStatus, markers, viewed: viewedState };
       }
       ui = newUi;
       ui.mount();
@@ -220,15 +226,22 @@ function loadFailure(error: unknown): string {
   return `Couldn't load the latest review order (${reason}), so this may be out of date.`;
 }
 
+/** The step's file: one from the order, or after those one it leaves out. */
+function anchorAt(review: Review | undefined, index: number): string | undefined {
+  return review && (review.anchors[index] ?? review.status.unlisted[index - review.anchors.length]?.anchor);
+}
+
 async function navigate(review: Review, index: number) {
-  const id = review.anchors[index]!;
+  const id = anchorAt(review, index);
+  if (id === undefined) return false;
   // Clear the hash first so jumping to the file that's already selected still scrolls
   if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
   location.hash = id;
-  const inTree = review.markers.setCurrent(index);
+  const inTree = review.markers.setCurrent(id);
   // Large PRs only render the files near the screen, so the page alone can't tell what's in the PR
   const found = review.viewed.isInPr(id) || inTree;
 
-  await saveProgress(review.pr, review.fingerprint, index);
+  // Files left out of the order aren't known until the tree is read again, so only steps in the order are kept
+  if (index < review.anchors.length) await saveProgress(review.pr, review.fingerprint, index);
   return found;
 }

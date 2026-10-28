@@ -45,7 +45,7 @@ test('marks the tree right away', () => {
 
 test('does nothing once stopped, even for a navigation still in flight', () => {
   markers.stop();
-  markers.setCurrent(0);
+  markers.setCurrent(A);
 
   expect(document.querySelectorAll('[data-review-order-step], [data-review-order-current]')).toHaveLength(0);
   expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(0);
@@ -119,6 +119,54 @@ test('reports nothing when the page has no file tree', async () => {
   expect(onProblem).not.toHaveBeenCalled();
 });
 
+test('marks the current file, also one left out of the order', () => {
+  expect(markers.setCurrent(B)).toBe(true);
+  expect(entry(B).hasAttribute('data-review-order-current')).toBe(true);
+
+  expect(markers.setCurrent(A)).toBe(true);
+  expect(entry(B).hasAttribute('data-review-order-current')).toBe(false);
+  expect(markers.setCurrent(`diff-${'c'.repeat(64)}`)).toBe(false);
+});
+
+describe('files left out of the order', () => {
+  const C = `diff-${'c'.repeat(64)}`;
+  const treeEntry = (anchor: string, path: string) =>
+    `<li role="treeitem" id="file-tree-item-${anchor}"><span data-filterable-item-text hidden>${path}</span><a href="#${anchor}">${path}</a></li>`;
+
+  test('are reported right away, in the order of the tree', () => {
+    markers.stop();
+    document.querySelector('[role="tree"]')!.innerHTML = treeEntry(C, 'src/c.ts') + treeEntry(A, 'src/a.ts') + treeEntry(B, 'src/b.ts');
+    const onUnlisted = vi.fn();
+    markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { onUnlisted });
+
+    expect(onUnlisted).toHaveBeenCalledExactlyOnceWith([
+      { path: 'src/c.ts', anchor: C },
+      { path: 'src/b.ts', anchor: B },
+    ]);
+  });
+
+  test('are kept when GitHub stops rendering them, and new ones are added', async () => {
+    markers.stop();
+    const onUnlisted = vi.fn();
+    markers = createTreeMarkers(ctx, [{ path: 'src/a.ts', anchor: A }], { onUnlisted });
+    onUnlisted.mockClear();
+
+    // Like collapsing a folder, then expanding another one
+    entry(B).remove();
+    await Promise.resolve();
+    await nextFrame();
+    expect(onUnlisted).not.toHaveBeenCalled();
+
+    document.querySelector('[role="tree"]')!.insertAdjacentHTML('beforeend', treeEntry(C, 'src/c.ts'));
+    await Promise.resolve();
+    await nextFrame();
+    expect(onUnlisted).toHaveBeenCalledExactlyOnceWith([
+      { path: 'f', anchor: B },
+      { path: 'src/c.ts', anchor: C },
+    ]);
+  });
+});
+
 describe('viewed files', () => {
   /** Stands in for the page's viewed states; set() ticks or unticks a file and tells the watchers. */
   function fakeViewed(initial: string[]) {
@@ -164,11 +212,12 @@ describe('viewed files', () => {
     await vi.waitFor(() => expect(eye(document.getElementById('src/b.ts')!)).not.toBeNull());
   });
 
-  test('are shown without a review order, which reports no problems', async () => {
+  test('are shown without a review order, which reports no problems or files left out', async () => {
     markers.stop();
     const viewed = fakeViewed([B]);
     onProblem.mockClear();
-    markers = createTreeMarkers(ctx, null, { viewed, onProblem });
+    const onUnlisted = vi.fn();
+    markers = createTreeMarkers(ctx, null, { viewed, onProblem, onUnlisted });
 
     expect(eye(entry(B))).not.toBeNull();
     expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(0);
@@ -177,6 +226,7 @@ describe('viewed files', () => {
     await nextFrame();
     expect(eye(entry(A))).not.toBeNull();
     expect(onProblem).not.toHaveBeenCalled();
+    expect(onUnlisted).not.toHaveBeenCalled();
   });
 
   test('follow files being ticked and unticked, until stopped', async () => {
