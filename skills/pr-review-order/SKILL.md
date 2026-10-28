@@ -25,7 +25,7 @@ The rules:
 2. **Numbered list.** The first numbered list (`1.`, `2.`, …) after the heading is the order. Text between the heading and the list is fine. A bullet list (`-`, `*`) is not read. The section ends at the next heading, so the list has to come before it.
 3. **One file per item, as `path: description`.**
    - The path comes first, relative to the repository root and exactly as GitHub shows it in the diff, case included. Backticks around it are fine.
-   - Separate path and description with a colon followed by a space. With `path — description` or `path - description` the item doesn't parse and the file is silently left out. With `path:description` the whole text becomes the path, which then isn't found in the PR.
+   - Separate path and description with a colon followed by a space. `path — description` and `path - description` don't parse, and that file is silently left out. A colon without a space after it doesn't work either: the item is dropped, or with a one-word description the whole text is taken as the path, which then isn't found in the PR.
    - The description is optional (`` `README.md` `` alone works). Keep it to one line: a nested list inside an item gets merged into its description.
    - Paths with spaces in them aren't supported.
 4. **List every changed file, once.** Files in the PR that aren't listed get a "!" in the file tree. Listed files that aren't in the PR show "File not found in this PR". If a file is listed twice, its first position is used. Use the new path for renamed files.

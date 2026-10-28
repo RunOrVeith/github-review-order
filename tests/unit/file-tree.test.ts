@@ -9,6 +9,7 @@ import {
   markTreeEntries,
   reviewSteps,
   scrollTopToReveal,
+  treeEntryPath,
 } from '@/utils/file-tree';
 
 const A = `diff-${'a'.repeat(64)}`;
@@ -211,6 +212,16 @@ describe('markTreeEntries eyes', () => {
   });
 });
 
+describe('treeEntryPath', () => {
+  test("reads the classic tree's full path", () => {
+    expect(treeEntryPath(entry(A))).toBe('src/a.ts');
+  });
+
+  test("falls back to the file's name", () => {
+    expect(treeEntryPath(entry(C))).toBe('README.md');
+  });
+});
+
 describe('reviewSteps', () => {
   test('keeps the first step of a file listed twice', () => {
     expect(reviewSteps([A, B, A].map(file))).toEqual(
@@ -295,6 +306,10 @@ describe('the /changes tree', () => {
   test('finds files by path and skips folders and React ids', () => {
     expect([...findTreeEntries(document).keys()]).toEqual(['src/a.ts', 'src/b.ts', 'README.md']);
     expect(findTree(document)).toBe(document.querySelector('[role="tree"]'));
+  });
+
+  test('reads the path from the id', () => {
+    expect(treeEntryPath(document.getElementById('src/b.ts')!)).toBe('src/b.ts');
   });
 
   test('marks files by path once they are keyed by anchor', async () => {
