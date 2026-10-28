@@ -5,6 +5,8 @@ const TREE_SELECTOR = '[role="tree"]';
 const TREE_ITEM_SELECTOR = '[role="treeitem"]';
 const ENTRY_SELECTOR = '[role="tree"] [role="treeitem"][id]';
 const DIFF_LINK_SELECTOR = '[role="tree"] a[href*="#diff-"]';
+// The classic tree keeps each file's full path here for its filter box
+const FILTER_TEXT_SELECTOR = '[data-filterable-item-text]';
 const ANCHOR = /diff-[0-9a-f]{64}/;
 // React's useId values, which the /changes tree uses for other elements' ids
 const GENERATED_ID = /^(_r_|_R_|:r)/;
@@ -73,6 +75,13 @@ export function findTreeEntries(root: ParentNode): Map<string, HTMLElement> {
 export function hasUnreadableTree(root: ParentNode): boolean {
   const files = Array.from(root.querySelectorAll<HTMLElement>(`${TREE_SELECTOR} ${TREE_ITEM_SELECTOR}`));
   return files.some((item) => !isFolder(item)) && findTree(root) === null;
+}
+
+/** The file's path: the /changes tree's id, the classic tree's filter text, or failing that its name. */
+export function treeEntryPath(entry: HTMLElement): string {
+  if (entry.id && !ANCHOR.test(entry.id) && !GENERATED_ID.test(entry.id)) return entry.id;
+  const label = entry.querySelector(FILTER_TEXT_SELECTOR) ?? entry.querySelector('a') ?? entry;
+  return label.textContent?.trim() ?? '';
 }
 
 function isFolder(entry: HTMLElement): boolean {

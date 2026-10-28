@@ -69,7 +69,13 @@
   // svelte-ignore state_referenced_locally
   let minimized = $state(initialMinimized);
   let missing = $state(false);
-  const item = $derived(items[index]);
+  // The order's files, then the ones it leaves out
+  const steps = $derived<ReviewItem[]>([
+    ...items,
+    ...(status?.unlisted ?? []).map(({ path }) => ({ path, description: '' })),
+  ]);
+  const item = $derived(steps[index]);
+  const unlisted = $derived(index >= items.length);
 
   // Viewed states live on GitHub's page; reading them listens for their changes while anything shows them
   const subscribeViewed = createSubscriber((update) => watchViewed?.(update));
@@ -77,8 +83,12 @@
     subscribeViewed();
     return skipViewed && isViewed(step);
   }
-  const previous = $derived(findStep(index, -1, items.length, skip));
-  const next = $derived(findStep(index, 1, items.length, skip));
+  const previous = $derived(findStep(index, -1, steps.length, skip));
+  const next = $derived(findStep(index, 1, steps.length, skip));
+  const done = $derived.by(() => {
+    subscribeViewed();
+    return steps.length > 0 && steps.every((_, step) => isViewed(step));
+  });
 
   // Whether the current step's file was viewed when last looked at, so only ticking it moves on
   let currentViewed = false;
@@ -88,7 +98,7 @@
     currentViewed = viewed;
     if (!ticked) return;
     // Computed here because `next` may not have seen this change yet
-    const target = findStep(index, 1, items.length, skip);
+    const target = findStep(index, 1, steps.length, skip);
     if (target !== null) void go(target);
   }
   // Listens to the viewed states the panel already watches, and only while it's on
@@ -206,7 +216,7 @@
     const observer = new ResizeObserver(measureSize);
     observer.observe(panel);
     // Where the user left off, unless that file has been viewed since; then the first one still to review
-    if (item) void go(skip(index) ? (findStep(-1, 1, items.length, skip) ?? index) : index);
+    if (item) void go(skip(index) ? (findStep(-1, 1, steps.length, skip) ?? index) : index);
     return () => observer.disconnect();
   });
 </script>
@@ -242,7 +252,7 @@
     aria-label="Next"
     onclick={() => next !== null && go(next)}
     disabled={next === null}
-    title={allViewedHint(next, index === items.length - 1, 'after this one') ?? 'Next file'}
+    title={allViewedHint(next, index === steps.length - 1, 'after this one') ?? 'Next file'}
   >
     →
   </button>
@@ -269,7 +279,8 @@
     <span class="status">
       <span class="step">
         <span class="grip" aria-hidden="true">⠿</span>
-        {#if item}{index + 1} / {items.length}{:else}Review order{/if}
+        {#if item}{index + 1} / {steps.length}{:else}Review order{/if}
+        {#if done}<span class="done" aria-hidden="true">✓</span>{/if}
       </span>
       {#if item && !minimized}
         <span class="toggles">
@@ -323,12 +334,17 @@
   {#if !minimized}
     {#if item}
       <code class="path">{item.path}</code>
-      {#if item.description}
+      {#if unlisted}
+        <p class="description note">Not in the review order</p>
+      {:else if item.description}
         <p class="description">{item.description}</p>
       {/if}
       {#if missing}
         <p class="warning">File not found in this PR</p>
       {/if}
+    {/if}
+    {#if done}
+      <p class="description finished" role="status">All files are viewed</p>
     {/if}
     {#if status?.reviewProblem}
       <p class="warning" role="status">{status.reviewProblem}</p>
@@ -356,6 +372,7 @@
     --border: var(--borderColor-default, var(--fallback-border));
     --button: var(--button-default-bgColor-rest, var(--fallback-button));
     --warning: var(--fgColor-attention, var(--fallback-warning));
+    --success: var(--fgColor-success, var(--fallback-success));
     --accent: var(--bgColor-accent-emphasis, var(--fallback-accent));
     --link: var(--fgColor-accent, var(--fallback-link));
     --tooltip-bg: var(--tooltip-bgColor, var(--fallback-tooltip-bg));
@@ -371,6 +388,7 @@
     --fallback-border: #d1d9e0;
     --fallback-button: #f6f8fa;
     --fallback-warning: #9a6700;
+    --fallback-success: #1a7f37;
     --fallback-accent: #0969da;
     --fallback-link: #0969da;
     --fallback-tooltip-bg: #25292e;
@@ -396,6 +414,7 @@
       --fallback-border: #3d444d;
       --fallback-button: #212830;
       --fallback-warning: #d29922;
+      --fallback-success: #3fb950;
       --fallback-accent: #1f6feb;
       --fallback-link: #4493f8;
       --fallback-tooltip-bg: #3d444d;
@@ -418,6 +437,12 @@
   .dragging,
   .dragging header {
     cursor: grabbing;
+  }
+
+  .done {
+    margin-left: 2px;
+    color: var(--success);
+    font-weight: 600;
   }
 
   .grip {
@@ -496,6 +521,15 @@
   .description,
   .warning {
     margin: 6px 0 0;
+  }
+
+  /* Said by the extension, not the order's author */
+  .note {
+    color: var(--muted);
+  }
+
+  .finished {
+    color: var(--success);
   }
 
   .warning {

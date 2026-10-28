@@ -525,6 +525,91 @@ describe('skip viewed', () => {
   });
 });
 
+describe('files left out of the order', () => {
+  const unlisted = [
+    { path: 'src/x.ts', anchor: 'diff-x' },
+    { path: 'src/y.ts', anchor: 'diff-y' },
+  ];
+
+  function renderWithUnlisted({ viewed = new Set<number>(), initialIndex = 2, initialSkipViewed = true } = {}) {
+    const listeners = new Set<() => void>();
+    const status = new PanelStatus();
+    status.unlisted = unlisted;
+    const onNavigate = vi.fn(() => true);
+    render(Panel, {
+      items,
+      initialIndex,
+      initialSkipViewed,
+      initialAutoAdvance: false,
+      status,
+      isViewed: (index: number) => viewed.has(index),
+      watchViewed: (onChange: () => void) => {
+        listeners.add(onChange);
+        return () => listeners.delete(onChange);
+      },
+      onNavigate,
+      onClose: () => {},
+    });
+    const notify = async () => {
+      for (const listener of listeners) listener();
+      await tick();
+    };
+    return { status, onNavigate, notify, user: userEvent.setup() };
+  }
+
+  const button = (name: string) => screen.getByRole('button', { name });
+
+  test('are stepped through after the order', async () => {
+    const { onNavigate, user } = renderWithUnlisted();
+    expect(screen.getByText('3 / 5')).toBeInTheDocument();
+
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(3);
+    expect(screen.getByText('4 / 5')).toBeInTheDocument();
+    expect(screen.getByText('src/x.ts')).toBeInTheDocument();
+    expect(screen.getByText('Not in the review order')).toBeInTheDocument();
+
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(4);
+    expect(button('Next')).toBeDisabled();
+  });
+
+  test('are skipped when viewed', async () => {
+    const { onNavigate, user } = renderWithUnlisted({ viewed: new Set([3]) });
+
+    await user.click(button('Next'));
+    expect(onNavigate).toHaveBeenLastCalledWith(4);
+  });
+
+  test('can turn up after the panel opened', async () => {
+    const { status, user } = renderWithUnlisted();
+    status.unlisted = [];
+    await tick();
+    expect(button('Next')).toBeDisabled();
+
+    status.unlisted = unlisted;
+    await tick();
+    await user.click(button('Next'));
+    expect(screen.getByText('src/x.ts')).toBeInTheDocument();
+  });
+
+  test('count towards being done', async () => {
+    const viewed = new Set([0, 1, 2, 3]);
+    const { notify } = renderWithUnlisted({ viewed, initialSkipViewed: false });
+    expect(screen.queryByText('All files are viewed')).not.toBeInTheDocument();
+    expect(screen.queryByText('✓')).not.toBeInTheDocument();
+
+    viewed.add(4);
+    await notify();
+    expect(screen.getByText('All files are viewed')).toBeInTheDocument();
+    expect(screen.getByText('✓')).toBeInTheDocument();
+
+    viewed.delete(0);
+    await notify();
+    expect(screen.queryByText('All files are viewed')).not.toBeInTheDocument();
+  });
+});
+
 describe('minimizing', () => {
   function renderMinimizable(initialMinimized = false) {
     const onNavigate = vi.fn(() => true);
