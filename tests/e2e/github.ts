@@ -34,13 +34,13 @@ export interface PullComment {
 /**
  * Serves a minimal stand-in for a GitHub PR. Assign `headSha` on the returned
  * object to simulate a new push, `viewed` to change which files GitHub
- * reports as viewed, `items` to edit the description's review order, and
- * `comments` to add comments.
+ * reports as viewed, `items` to edit the description's review order (null
+ * leaves the section out), and `comments` to add comments.
  */
 export async function servePullRequest(context: BrowserContext, headSha = 'a'.repeat(40)) {
   const pr = {
     headSha,
-    items: reviewOrder,
+    items: reviewOrder as ReviewOrder | null,
     comments: [] as PullComment[],
     // Set conversationDelay to make reading the description slow, like a cold GitHub request
     conversationDelay: 0,
@@ -68,7 +68,7 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
   return pr;
 }
 
-function conversationPage(pr: { headSha: string; items: ReviewOrder; comments: PullComment[] }): string {
+function conversationPage(pr: { headSha: string; items: ReviewOrder | null; comments: PullComment[] }): string {
   const section = (items: ReviewOrder) => `
     <div class="markdown-heading"><h2 class="heading-element">Review order</h2><a class="anchor"></a></div>
     <ol>${items.map((item) => `<li><code>${item.path}</code>: ${item.description}</li>`).join('')}</ol>`;
@@ -92,7 +92,7 @@ function conversationPage(pr: { headSha: string; items: ReviewOrder; comments: P
     <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(data)}</script>
     <div id="pullrequest-1" class="timeline-comment-group">
       ${header('alice', '')}
-      <div class="comment-body markdown-body"><p>Adds the thing.</p>${section(pr.items)}</div>
+      <div class="comment-body markdown-body"><p>Adds the thing.</p>${pr.items ? section(pr.items) : ''}</div>
     </div>
     ${comments.join('')}`;
 }

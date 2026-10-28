@@ -44,7 +44,7 @@ export default defineContentScript({
     let recheck: Promise<void> | null = null;
     let lastRead = 0;
 
-    function hide() {
+    function removePanel() {
       ui?.remove();
       ui = undefined;
       markers?.stop();
@@ -53,15 +53,21 @@ export default defineContentScript({
       status = undefined;
     }
 
+    function hide() {
+      removePanel();
+      // Without a panel the tree still shows which files are viewed
+      if (viewed) markers = createTreeMarkers(ctx, null, { viewed });
+    }
+
     async function update(url: string) {
       const pr = parsePullUrl(url);
       const key = pr?.isChangesTab ? `${pr.owner}/${pr.repo}#${pr.number}` : null;
       if (key === (active?.key ?? null)) return;
 
       active = pr && key ? { key, pr } : null;
-      hide();
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
+      hide();
       if (pr && key) await show(pr, key);
     }
 
@@ -160,11 +166,13 @@ export default defineContentScript({
       // Nothing is on the page until mount(), so a panel for a tab the user already left is just dropped
       if (active?.key !== key) return;
 
-      hide();
+      removePanel();
       shownFingerprint = fingerprint;
       status = newStatus;
-      // A section without files has no steps to navigate or mark
-      if (items.length > 0) {
+      // A section without files has no steps to navigate or mark, but the tree still shows which files are viewed
+      if (items.length === 0) {
+        markers = createTreeMarkers(ctx, null, { viewed: viewedState });
+      } else {
         const files = items.map((item, index) => ({ path: item.path, anchor: anchors[index]! }));
         markers = createTreeMarkers(ctx, files, {
           viewed: viewedState,

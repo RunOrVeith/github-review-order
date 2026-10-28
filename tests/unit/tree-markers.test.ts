@@ -212,6 +212,23 @@ describe('viewed files', () => {
     await vi.waitFor(() => expect(eye(document.getElementById('src/b.ts')!)).not.toBeNull());
   });
 
+  test('are shown without a review order, which reports no problems or files left out', async () => {
+    markers.stop();
+    const viewed = fakeViewed([B]);
+    onProblem.mockClear();
+    const onUnlisted = vi.fn();
+    markers = createTreeMarkers(ctx, null, { viewed, onProblem, onUnlisted });
+
+    expect(eye(entry(B))).not.toBeNull();
+    expect(document.querySelectorAll('[data-review-order-marker]')).toHaveLength(0);
+
+    viewed.set(A, true);
+    await nextFrame();
+    expect(eye(entry(A))).not.toBeNull();
+    expect(onProblem).not.toHaveBeenCalled();
+    expect(onUnlisted).not.toHaveBeenCalled();
+  });
+
   test('follow files being ticked and unticked, until stopped', async () => {
     markers.stop();
     const viewed = fakeViewed([]);
