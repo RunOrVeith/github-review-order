@@ -22,15 +22,16 @@ export const UNREADABLE_TREE = "Couldn't read GitHub's file tree, so it doesn't 
 
 /**
  * Shows the review order and which files are viewed in GitHub's file tree, and
- * keeps it there while GitHub re-renders or lazy-loads the tree.
+ * keeps it there while GitHub re-renders or lazy-loads the tree. Without an
+ * order (null files) it only shows which files are viewed.
  */
 export function createTreeMarkers(
   ctx: ContentScriptContext,
-  files: ReviewFile[],
+  files: ReviewFile[] | null,
   { viewed, onProblem = () => {} }: TreeMarkerOptions = {},
 ): TreeMarkers {
-  const steps = reviewSteps(files);
-  const keyByAnchor = createAnchorKeys(files, schedule);
+  const steps = files && reviewSteps(files);
+  const keyByAnchor = createAnchorKeys(files ?? [], schedule);
   // The current file's anchor
   let current: string | null = null;
   let tree: HTMLElement | null = null;
@@ -51,12 +52,13 @@ export function createTreeMarkers(
     const entries = tree ? keyByAnchor(findTreeEntries(tree)) : new Map<string, HTMLElement>();
 
     // If none of the order's files are in the tree it was most likely misread, and every file would be flagged
-    const matched = files.some((file) => entries.has(file.anchor));
+    const matched = files ? files.some((file) => entries.has(file.anchor)) : entries.size > 0;
     if (matched) markTreeEntries(entries, steps, current, (anchor) => viewed?.isViewed(anchor) ?? false);
     else if (marked) clearTreeMarks(document);
     marked = matched;
 
-    report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
+    // Without an order there's no panel to say what's wrong with the tree
+    if (files) report(matched ? null : tree ? NONE_IN_TREE : hasUnreadableTree(document) ? UNREADABLE_TREE : null);
     return entries;
   }
 
@@ -102,7 +104,7 @@ export function createTreeMarkers(
   return {
     setCurrent(index) {
       if (stopped) return false;
-      current = files[index]?.anchor ?? null;
+      current = files?.[index]?.anchor ?? null;
 
       const entry = current ? apply().get(current) : undefined;
       if (entry) scrollTreeTo(entry);

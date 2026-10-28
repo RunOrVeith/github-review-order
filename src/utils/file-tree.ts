@@ -125,25 +125,26 @@ export function reviewSteps(files: ReviewFile[]): Map<string, number> {
 /**
  * Gives each file a badge with its step in the review order, or a warning if
  * it's missing from it, plus an eye once it's viewed, and highlights the
- * current one. Entries, steps and the current file are by anchor. Only writes
- * what changed.
+ * current one. Without an order (null steps) files only get their eye.
+ * Entries, steps and the current file are by anchor. Only writes what changed.
  */
 export function markTreeEntries(
   entries: Map<string, HTMLElement>,
-  steps: Map<string, number>,
+  steps: Map<string, number> | null,
   current: string | null,
   isViewed: (anchor: string) => boolean = () => false,
 ): void {
   for (const [anchor, entry] of entries) {
-    const step = steps.get(anchor);
+    const step = steps?.get(anchor);
+    const unlisted = steps !== null && step === undefined;
     const isCurrent = anchor === current;
     const viewed = isViewed(anchor);
     setAttribute(entry, STEP, step === undefined ? null : String(step));
-    setAttribute(entry, UNLISTED, step === undefined ? '' : null);
+    setAttribute(entry, UNLISTED, unlisted ? '' : null);
     setAttribute(entry, CURRENT, isCurrent ? '' : null);
     setAttribute(entry, VIEWED, viewed ? '' : null);
-    setBadges(entry, step === undefined ? '!' : String(step), viewed);
-    setUnlistedTitle(entry, step === undefined);
+    setBadges(entry, step !== undefined ? String(step) : unlisted ? '!' : null, viewed);
+    setUnlistedTitle(entry, unlisted);
   }
 }
 
@@ -166,11 +167,16 @@ function setAttribute(element: Element, name: string, value: string | null) {
 
 /**
  * The badges are elements of their own rather than the entry's ::before/::after,
- * which GitHub uses for its active-file indicator.
+ * which GitHub uses for its active-file indicator. A null text leaves out the
+ * step or warning.
  */
-function setBadges(entry: Element, text: string, viewed: boolean) {
+function setBadges(entry: Element, text: string | null, viewed: boolean) {
   const doc = entry.ownerDocument;
   let badges = entry.querySelector(`:scope > [${BADGES}]`);
+  if (text === null && !viewed) {
+    badges?.remove();
+    return;
+  }
   if (!badges) {
     badges = doc.createElement('span');
     badges.setAttribute(BADGES, '');
@@ -180,12 +186,16 @@ function setBadges(entry: Element, text: string, viewed: boolean) {
   }
 
   let marker = badges.querySelector(`:scope > [${MARKER}]`);
-  if (!marker) {
-    marker = doc.createElement('span');
-    marker.setAttribute(MARKER, '');
-    badges.append(marker);
+  if (text === null) {
+    marker?.remove();
+  } else {
+    if (!marker) {
+      marker = doc.createElement('span');
+      marker.setAttribute(MARKER, '');
+      badges.append(marker);
+    }
+    if (marker.textContent !== text) marker.textContent = text;
   }
-  if (marker.textContent !== text) marker.textContent = text;
 
   const eye = badges.querySelector(`:scope > [${EYE}]`);
   if (viewed && !eye) badges.prepend(createEye(doc));

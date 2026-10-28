@@ -3,7 +3,8 @@
  * ::after for its active-file indicator, so those are left alone.
  */
 [role='treeitem'][data-review-order-step],
-[role='treeitem'][data-review-order-unlisted] {
+[role='treeitem'][data-review-order-unlisted],
+[role='treeitem'][data-review-order-viewed] {
   position: relative;
   /* Room for the badge, so long names truncate before it instead of running underneath */
   padding-right: 28px !important;
@@ -12,6 +13,11 @@
 /* And for the eye in front of it */
 [role='treeitem'][data-review-order-viewed] {
   padding-right: 48px !important;
+}
+
+/* Without a review order the eye is all there is */
+[role='treeitem'][data-review-order-viewed]:not([data-review-order-step], [data-review-order-unlisted]) {
+  padding-right: 24px !important;
 }
 
 [data-review-order-badges] {

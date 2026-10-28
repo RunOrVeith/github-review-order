@@ -202,6 +202,23 @@ describe('markTreeEntries eyes', () => {
     expect(records).toEqual([]);
   });
 
+  test('is all a file gets without a review order', () => {
+    const viewed = new Set([A]);
+    const entries = findTreeEntries(document);
+    markTreeEntries(entries, null, null, (key) => viewed.has(key));
+
+    expect(eye(A)).not.toBeNull();
+    expect(entry(A).querySelector('[data-review-order-marker]')).toBeNull();
+    expect(entry(B).querySelector('[data-review-order-badges]')).toBeNull();
+    expect(document.querySelectorAll('[data-review-order-step], [data-review-order-unlisted]')).toHaveLength(0);
+    expect(entry(B).getAttribute('title')).toBe('GitHub tooltip');
+    expect(entry(A).hasAttribute('title')).toBe(false);
+
+    viewed.delete(A);
+    markTreeEntries(entries, null, null, (key) => viewed.has(key));
+    expect(entry(A).querySelector('[data-review-order-badges]')).toBeNull();
+  });
+
   test('is removed with the other marks', () => {
     markTreeEntries(findTreeEntries(document), reviewSteps([A].map(file)), null, () => true);
     clearTreeMarks(document);

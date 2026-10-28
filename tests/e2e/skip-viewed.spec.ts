@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { anchorId, CHANGES_URL, reviewOrder, servePullRequest, UNLISTED_PATH } from './github';
+import { anchorId, CHANGES_URL, CONVERSATION_URL, reviewOrder, servePullRequest, UNLISTED_PATH } from './github';
 
 // The fixture marks the second file as viewed, and only renders a file once it's navigated to
 const [first, second, third] = reviewOrder;
@@ -138,9 +138,35 @@ test('shows which files are viewed in the file tree', async ({ context, page }) 
   await firstFile.getByRole('button', { name: 'Viewed' }).click();
   await expect(eye(first!.path)).toHaveCount(0);
 
+  // Closing the panel takes the order out of the tree, but it still shows which files are viewed
   await panel(page).getByRole('button', { name: 'Close' }).click();
-  await expect(page.locator('[data-review-order-eye], [data-review-order-viewed]')).toHaveCount(0);
+  await expect(page.locator('[data-review-order-marker]')).toHaveCount(0);
+  await expect(eye(second!.path)).toBeVisible();
+  await expect(eye(UNLISTED_PATH)).toBeVisible();
 });
+
+const withoutOrder: [string, typeof reviewOrder | null][] = [
+  ['without a review order', null],
+  ['with a review order section without files', []],
+];
+for (const [name, items] of withoutOrder) {
+  test(`shows which files are viewed ${name}`, async ({ context, page }) => {
+    const pr = await servePullRequest(context);
+    pr.items = items;
+    pr.viewed = new Set([second!.path]);
+    const description = page.waitForResponse(CONVERSATION_URL);
+    await page.goto(CHANGES_URL);
+    await description;
+    const eye = (path: string) => page.locator(`[id="${path}"] [data-review-order-eye]`);
+
+    await expect(eye(second!.path)).toBeVisible();
+    await expect(eye(first!.path)).toHaveCount(0);
+    await expect(page.locator('[data-review-order-marker], [data-review-order-step]')).toHaveCount(0);
+
+    await page.locator(`#${anchorId(first!.path)}`).getByRole('button', { name: 'Not Viewed' }).click();
+    await expect(eye(first!.path)).toBeVisible();
+  });
+}
 
 test('ticking the current file moves on to the next unviewed one', async ({ context, page }) => {
   await servePullRequest(context);
