@@ -96,6 +96,8 @@ Nothing is sent anywhere. The only requests it makes go to github.com, to load t
 
 ## Development
 
+You're welcome to contribute if there is a clear flow improvement. I'm going to state right now that I will be the judge of what is an improvement.
+
 - `npm run dev` opens a chrome with the extension loaded and reloads it when you change something. It keeps its profile in `.wxt/chrome-data`, so you only have to log into github once
 - `npm run dev:firefox` does the same for firefox
 - `npm test` runs the unit tests, `npm run e2e` the playwright ones (run `npx playwright install chromium` once before)
