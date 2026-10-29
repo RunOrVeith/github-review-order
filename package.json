@@ -1,7 +1,7 @@
 {
   "name": "github-review-order",
   "version": "1.3.0",
-  "description": "A browser extension that lets you propose a order in which to review files inside of a github pull request, together with a navigation utility that follows that order",
+  "description": "A browser extension that lets you propose an order in which to review files inside of a github pull request, together with a navigation utility that follows that order",
   "homepage": "https://github.com/RunOrVeith/github-review-order#readme",
   "bugs": {
     "url": "https://github.com/RunOrVeith/github-review-order/issues"
