@@ -46,6 +46,15 @@ const VIEW_TOGGLE_LABEL = /^(not )?viewed$/i;
 // GitHub's React pages embed their data, e.g. every file's viewed state on large PRs that only render some
 export const EMBEDDED_DATA_SELECTOR = 'script[data-target="react-app.embeddedData"]';
 const FILE_ANCHOR = /^diff-[0-9a-f]{64}$/;
+// Without a commit range after it, the changes tab shows the whole PR, like its .diff
+const WHOLE_PULL_TAB = /^\/(files|changes)\/?$/;
+// Each file's diff is a table; every line's number and code cells say which side and line they're for.
+// Unified view has one more number cell, which is empty and has neither.
+const DIFF_TABLE_ATTRIBUTE = 'data-diff-anchor';
+const DIFF_LINE_CELL_SELECTOR = 'td[data-diff-side][data-line-number]';
+const EMPTY_NUMBER_CELL_SELECTOR = 'td.empty-diff-line';
+// Only code cells have it
+const LINE_ANCHOR_ATTRIBUTE = 'data-line-anchor';
 
 interface DiffSummary {
   pathDigest?: unknown;
@@ -78,6 +87,23 @@ export function parsePullUrl(url: string): PullRef | null {
     number: Number(match[3]),
     isChangesTab: CHANGES_TAB.test(match[4] ?? ''),
   };
+}
+
+/** Whether the URL is the changes tab showing all of the PR's commits rather than some of them. */
+export function viewsWholePull(url: string): boolean {
+  const match = PULL_PATH.exec(new URL(url).pathname);
+  return match !== null && WHOLE_PULL_TAB.test(match[4] ?? '');
+}
+
+/**
+ * The PR's whole diff in git's format. It redirects to another host, so this
+ * only works from the extension's background, not from github.com's pages.
+ */
+export async function fetchPullDiff(pr: Pick<PullRef, 'owner' | 'repo' | 'number'>): Promise<string> {
+  const path = [pr.owner, pr.repo, 'pull', `${pr.number}.diff`].map(encodeURIComponent).join('/');
+  const response = await fetch(`https://github.com/${path}`, { cache: 'no-store', credentials: 'include' });
+  if (!response.ok) throw new RequestError(response.status);
+  return response.text();
 }
 
 /**
@@ -241,6 +267,46 @@ export function isRefreshControl(target: EventTarget | null): boolean {
 /** Whether the id is a file's anchor on the changes tab rather than, say, its path. */
 export function isFileAnchor(id: string): boolean {
   return FILE_ANCHOR.test(id);
+}
+
+/** A line in the old (left) or new (right) version of a file. */
+export type DiffSide = 'left' | 'right';
+
+export interface DiffLine {
+  fileAnchor: string;
+  side: DiffSide;
+  line: number;
+}
+
+function lineCellsSelector({ fileAnchor, side, line }: DiffLine): string {
+  return `table[${DIFF_TABLE_ATTRIBUTE}="${fileAnchor}"] td[data-diff-side="${side}"][data-line-number="${line}"]`;
+}
+
+/** Selects a line's number and code cells in its file's diff, in split and unified view. */
+export function diffLineSelector(line: DiffLine): string {
+  const cells = lineCellsSelector(line);
+  // Unified view's second number cell comes right after the first one of a removed line
+  return line.side === 'left' ? `${cells}, ${cells} + ${EMPTY_NUMBER_CELL_SELECTOR}` : cells;
+}
+
+/** Selects a line's code cell in its file's diff. */
+export function diffCodeSelector(line: DiffLine): string {
+  return `${lineCellsSelector(line)}[${LINE_ANCHOR_ATTRIBUTE}]`;
+}
+
+/** The diff line a cell, or something inside it, belongs to. */
+export function diffLineAt(target: Element): (DiffLine & { cell: Element }) | null {
+  const cell = target.closest(DIFF_LINE_CELL_SELECTOR);
+  const fileAnchor = cell?.closest(`table[${DIFF_TABLE_ATTRIBUTE}]`)?.getAttribute(DIFF_TABLE_ATTRIBUTE);
+  const side = cell?.getAttribute('data-diff-side');
+  const line = Number(cell?.getAttribute('data-line-number'));
+  if (!cell || !fileAnchor || (side !== 'left' && side !== 'right') || !Number.isInteger(line)) return null;
+  return { fileAnchor, side, line, cell };
+}
+
+/** The changes tab scrolls to a line at `#<file anchor>L<old line>` or `R<new line>`. */
+export function diffLineAnchor({ fileAnchor, side, line }: DiffLine): string {
+  return `${fileAnchor}${side === 'left' ? 'L' : 'R'}${line}`;
 }
 
 /** GitHub anchors each file on the changes tab at `#diff-<sha256 of its path>`. */

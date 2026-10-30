@@ -1,7 +1,9 @@
 import { mount, unmount } from 'svelte';
 import { RequestError, type PullPage, type PullRef } from '@/utils/github';
 import { isShowPanelMessage } from '@/utils/messages';
+import { goToAnchor } from '@/utils/navigation';
 import type { CachedReview } from '@/utils/progress';
+import { createMovedLines, type MovedLines } from './moved-lines';
 import Panel from './Panel.svelte';
 import { PanelStatus } from './status.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
@@ -41,6 +43,8 @@ export default defineContentScript({
     let markers: TreeMarkers | undefined;
     // Lives as long as the changes tab is open, so toggles seen there outlast panel rebuilds
     let viewed: ViewedState | undefined;
+    // Also there without a panel, since moves are worth seeing on any PR
+    let moves: MovedLines | undefined;
     // The PR whose changes tab is open; hash-only URL changes from scrolling keep it unchanged
     let active: { key: string; pr: PullRef } | null = null;
     // What the panel currently shows, so re-checks only rebuild it when something changed
@@ -69,11 +73,17 @@ export default defineContentScript({
     async function update(url: string) {
       const pr = parsePullUrl(url);
       const key = pr?.isChangesTab ? `${pr.owner}/${pr.repo}#${pr.number}` : null;
-      if (key === (active?.key ?? null)) return;
+      if (key === (active?.key ?? null)) {
+        // Picking some of the PR's commits stays on its changes tab
+        moves?.followUrl(url);
+        return;
+      }
 
       active = pr && key ? { key, pr } : null;
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
+      moves?.stop();
+      moves = active ? createMovedLines(ctx, active.pr, url) : undefined;
       hide();
       if (pr && key) await show(pr, key);
     }
@@ -115,7 +125,10 @@ export default defineContentScript({
       }
 
       // GitHub unticks files changed by new commits, but the page's embedded states don't update
-      if (rechecking) await viewed?.refresh(pr);
+      if (rechecking) {
+        moves?.refresh();
+        await viewed?.refresh(pr);
+      }
       await mountPanel(pr, key, review);
     }
 
@@ -256,9 +269,7 @@ function anchorAt(review: Review | undefined, index: number): string | undefined
 async function navigate(review: Review, index: number) {
   const id = anchorAt(review, index);
   if (id === undefined) return false;
-  // Clear the hash first so jumping to the file that's already selected still scrolls
-  if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
-  location.hash = id;
+  goToAnchor(id);
   const inTree = review.markers.setCurrent(id);
   // Large PRs only render the files near the screen, so the page alone can't tell what's in the PR
   const found = review.viewed.isInPr(id) || inTree;

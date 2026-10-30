@@ -10,3 +10,10 @@ export function findStep(
   }
   return null;
 }
+
+/** Scrolls to the element at `#id`, even when that's where the URL already points. */
+export function goToAnchor(id: string) {
+  // Clear the hash first so jumping to the anchor that's already selected still scrolls
+  if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
+  location.hash = id;
+}

@@ -55,6 +55,16 @@ It automatically injects:
 ![file tree](screenshots/file_tree.png)
 
 
+### Moved code
+
+Code that was only moved, possibly re-indented, gets its own colours in the diff, on every PR and with or without a review order:
+- orange where it was removed
+- striped green where it was added
+- hovering it says where the other end is, with a link that jumps there; lines that were only re-indented in place say so
+
+Whitespace is ignored when comparing, and a block has to be at least three lines long (or a line re-indented in place), so common lines like imports and closing brackets don't light up everywhere.
+To read the whole diff, the extension fetches the PR's `.diff` in the background, which is why it asks for access to `github.com` and `patch-diff.githubusercontent.com`.
+
 ### Examples
 
 - https://github.com/RunOrVeith/github-review-order/pull/12/changes
@@ -66,6 +76,8 @@ It automatically injects:
 - comments hidden behind github's "load more" aren't read, so a newer order in there is ignored
 - it works off github's page, so if they change their UI it will probably break until I fix it
 - no Safari, I haven't tried it
+- moved code is only coloured when looking at all of a PR's commits, not a selection of them, and a new push is picked up by GitHub's Refresh only while the panel is open
+- code that was moved and edited at the same time only shows the parts that stayed the same
 
 
 ## Installing

@@ -1,0 +1,24 @@
+/* The hint shown when hovering a moved line. GitHub's colour variables reach into the shadow root. */
+.hint {
+  position: fixed;
+  z-index: 100;
+  max-width: 480px;
+  padding: 6px 10px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: 6px;
+  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
+  box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12), 0 8px 24px rgba(66, 74, 83, 0.12));
+  color: var(--fgColor-default, #1f2328);
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--fgColor-accent, #0969da);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}

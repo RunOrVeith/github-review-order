@@ -3,6 +3,11 @@ import {
   changesViewedStates,
   describePost,
   diffAnchorId,
+  diffCodeSelector,
+  diffLineAnchor,
+  diffLineAt,
+  diffLineSelector,
+  fetchPullDiff,
   fetchPullPage,
   fetchViewedSnapshot,
   isRefreshControl,
@@ -11,6 +16,7 @@ import {
   readRenderedViewToggles,
   readViewToggle,
   RequestError,
+  viewsWholePull,
 } from '@/utils/github';
 
 describe('parsePullUrl', () => {
@@ -400,5 +406,77 @@ describe('fetchViewedSnapshot', () => {
 
     expect(fetch).toHaveBeenCalledWith(new URL('/acme/repo/pull/12/changes', location.origin), expect.anything());
     expect(snapshot).toEqual(new Map([[VIEWED, true]]));
+  });
+});
+
+describe('viewsWholePull', () => {
+  test.each([
+    ['https://github.com/acme/repo/pull/1/changes', true],
+    ['https://github.com/acme/repo/pull/1/files/', true],
+    ['https://github.com/acme/repo/pull/1/changes#diff-abc', true],
+    [`https://github.com/acme/repo/pull/1/changes/${'a'.repeat(40)}`, false],
+    [`https://github.com/acme/repo/pull/1/files/${'a'.repeat(40)}..${'b'.repeat(40)}`, false],
+    ['https://github.com/acme/repo/pull/1', false],
+  ])('%s: %s', (url, whole) => {
+    expect(viewsWholePull(url)).toBe(whole);
+  });
+});
+
+describe('fetchPullDiff', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("fetches the PR's .diff from github.com with the user's cookies", async () => {
+    const fetch = vi.fn(async () => new Response('diff --git a/x b/x'));
+    vi.stubGlobal('fetch', fetch);
+
+    expect(await fetchPullDiff({ owner: 'acme', repo: 'repo', number: 12 })).toBe('diff --git a/x b/x');
+    expect(fetch).toHaveBeenCalledWith('https://github.com/acme/repo/pull/12.diff', {
+      cache: 'no-store',
+      credentials: 'include',
+    });
+  });
+
+  test('rejects with the status when GitHub refuses', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 406 })));
+    const error = await fetchPullDiff({ owner: 'acme', repo: 'repo', number: 12 }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect((error as RequestError).status).toBe(406);
+  });
+});
+
+describe('diff lines', () => {
+  const FILE = `diff-${'c'.repeat(64)}`;
+  // GitHub's split view: both sides of a line in one row
+  const SPLIT_ROW = `
+    <table data-diff-anchor="${FILE}"><tbody><tr>
+      <td data-diff-side="left" data-line-number="223">223</td>
+      <td data-diff-side="left" data-line-number="223" data-line-anchor="${FILE}L223"><code><span>old</span></code></td>
+      <td data-diff-side="right" data-line-number="224">224</td>
+      <td data-diff-side="right" data-line-number="224" data-line-anchor="${FILE}R224"><code>new</code></td>
+    </tr></tbody></table>`;
+
+  beforeEach(() => {
+    document.body.innerHTML = SPLIT_ROW;
+  });
+
+  test('tells which line a cell or something inside it belongs to', () => {
+    const inner = document.querySelector('span')!;
+    expect(diffLineAt(inner)).toMatchObject({ fileAnchor: FILE, side: 'left', line: 223 });
+    expect(diffLineAt(document.querySelectorAll('td')[2]!)).toMatchObject({ side: 'right', line: 224 });
+    expect(diffLineAt(document.body)).toBeNull();
+  });
+
+  test("selects only the line's own side in split view", () => {
+    const left = Array.from(document.querySelectorAll(diffLineSelector({ fileAnchor: FILE, side: 'left', line: 223 })));
+    const code = Array.from(document.querySelectorAll(diffCodeSelector({ fileAnchor: FILE, side: 'right', line: 224 })));
+
+    expect(left.map((cell) => cell.textContent)).toEqual(['223', 'old']);
+    expect(code.map((cell) => cell.textContent)).toEqual(['new']);
+  });
+
+  test('anchors lines like GitHub does', () => {
+    expect(diffLineAnchor({ fileAnchor: FILE, side: 'left', line: 3 })).toBe(`${FILE}L3`);
+    expect(diffLineAnchor({ fileAnchor: FILE, side: 'right', line: 9 })).toBe(`${FILE}R9`);
   });
 });
