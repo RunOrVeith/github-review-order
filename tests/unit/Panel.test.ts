@@ -653,6 +653,28 @@ describe('minimizing', () => {
     expect(screen.getByText('2 / 3')).toBeInTheDocument();
   });
 
+  test('expand() restores a minimized panel and leaves an expanded one alone', async () => {
+    const onMinimizedChange = vi.fn();
+    const { component } = render(Panel, {
+      items,
+      initialIndex: 0,
+      initialMinimized: true,
+      onNavigate: () => true,
+      onMinimizedChange,
+      onClose: () => {},
+    });
+
+    component.expand();
+    await tick();
+    expect(onMinimizedChange).toHaveBeenCalledExactlyOnceWith(false);
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+
+    component.expand();
+    await tick();
+    expect(onMinimizedChange).toHaveBeenCalledOnce();
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+  });
+
   test('clicking Next twice quickly steps twice instead of minimizing', async () => {
     const { onNavigate, onMinimizedChange, user } = renderMinimizable();
 

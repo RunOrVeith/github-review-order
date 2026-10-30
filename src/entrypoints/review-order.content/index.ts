@@ -1,5 +1,6 @@
 import { mount, unmount } from 'svelte';
 import { RequestError, type PullPage, type PullRef } from '@/utils/github';
+import { isShowPanelMessage } from '@/utils/messages';
 import type { CachedReview } from '@/utils/progress';
 import Panel from './Panel.svelte';
 import { PanelStatus } from './status.svelte';
@@ -21,6 +22,11 @@ interface Review {
 // The e2e build sets it to 0 so tests don't have to wait.
 const RECHECK_INTERVAL = Number(import.meta.env.WXT_RECHECK_INTERVAL ?? 30_000);
 
+/** What the mounted panel lets the content script do to it. */
+interface PanelApp {
+  expand(): void;
+}
+
 const EMPTY_SECTION = 'The "Review order" section has no numbered list of files.';
 
 export default defineContentScript({
@@ -31,7 +37,7 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
-    let ui: ShadowRootContentScriptUi<ReturnType<typeof mount>> | undefined;
+    let ui: ShadowRootContentScriptUi<PanelApp> | undefined;
     let markers: TreeMarkers | undefined;
     // Lives as long as the changes tab is open, so toggles seen there outlast panel rebuilds
     let viewed: ViewedState | undefined;
@@ -41,6 +47,7 @@ export default defineContentScript({
     let shownFingerprint: string | null = null;
     // What the current panel shows besides the steps
     let status: PanelStatus | undefined;
+    // A re-read of the PR in progress, so another one isn't started on top of it
     let recheck: Promise<void> | null = null;
     let lastRead = 0;
 
@@ -187,12 +194,27 @@ export default defineContentScript({
 
     /** Picks up new pushes and description edits while the changes tab stays open. */
     function recheckOpenPanel(always = false) {
-      // A closed panel stays closed until the changes tab is opened again
+      // A closed panel stays closed until the changes tab is opened again or the toolbar button is clicked
       if (!active || !ui || recheck) return;
       // Each check downloads the whole conversation page, which is large on busy PRs
       if (!always && Date.now() - lastRead < RECHECK_INTERVAL) return;
       recheck = show(active.pr, active.key, true).finally(() => (recheck = null));
     }
+
+    /** Brings back a closed or minimized panel when the extension's toolbar button is clicked. */
+    function showPanel() {
+      // Off the changes tab there's no panel to show
+      if (!active) return;
+      if (ui) return ui.mounted?.expand();
+      // Re-reads the PR, since it may have changed while the panel was closed
+      if (!recheck) recheck = show(active.pr, active.key).finally(() => (recheck = null));
+    }
+
+    const onMessage = (message: unknown) => {
+      if (isShowPanelMessage(message)) showPanel();
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    ctx.onInvalidated(() => browser.runtime.onMessage.removeListener(onMessage));
 
     // The event can fire before location.href is updated, so use the URL it carries
     ctx.addEventListener(window, 'wxt:locationchange', ({ newUrl }) => void update(newUrl.href));

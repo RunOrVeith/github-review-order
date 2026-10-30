@@ -29,6 +29,7 @@ Contributors can also comment with a new order later, the latest one is used (un
 
 ### Widget 
 When you open the diff view, you get an overlay widget injected into the page. You can drag it around if it bothers you where it is, or double click to minimize/maximize.
+If you closed or minimized it, click the extension's button in the browser toolbar to bring it back.
 
 ![overlay screenshot](screenshots/overlay.png)
 

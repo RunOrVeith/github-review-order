@@ -193,16 +193,25 @@
     onAutoAdvanceChange?.(autoAdvance);
   }
 
-  function toggleMinimized(event: MouseEvent) {
-    // Double-clicking a control, like stepping quickly with Next, isn't meant for the panel
-    if ((event.target as Element).closest('a, button, label, input')) return;
+  function setMinimized(value: boolean) {
     // Shrinks and grows from the top-left corner, so the header stays under the pointer
     position = { horizontal: { edge: 'left', offset: placed.x }, vertical: { edge: 'top', offset: placed.y } };
     resizing = true;
-    minimized = !minimized;
+    minimized = value;
+    onMinimizedChange?.(minimized);
+  }
+
+  function toggleMinimized(event: MouseEvent) {
+    // Double-clicking a control, like stepping quickly with Next, isn't meant for the panel
+    if ((event.target as Element).closest('a, button, label, input')) return;
+    setMinimized(!minimized);
     // A double-click also selects the word under the pointer
     getSelection()?.removeAllRanges();
-    onMinimizedChange?.(minimized);
+  }
+
+  /** Brings back the whole panel, e.g. when the extension's toolbar button is clicked. */
+  export function expand() {
+    if (minimized) setMinimized(false);
   }
 
   /** Explains a disabled button when skipping is what disabled it. */
