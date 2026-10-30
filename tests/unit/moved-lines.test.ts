@@ -61,14 +61,14 @@ function styledCells(css: string): Map<string, string[]> {
 }
 
 describe('movedLinesCss', () => {
-  test("colours all of a removed line's cells, but only the code of an added one", () => {
+  test('stripes the code of removed and added lines, but not their numbers', () => {
     document.body.innerHTML = unifiedTable(OLD, [9, 10, 11, 12, 13], []) + unifiedTable(NEW, [], [39, 40, 41, 42, 43]);
     const cells = styledCells(movedLinesCss([moved], anchors));
 
     expect(Object.fromEntries(cells)).toEqual({
-      'old left 10': ['number', 'blank', 'code'],
-      'old left 11': ['number', 'blank', 'code'],
-      'old left 12': ['number', 'blank', 'code'],
+      'old left 10': ['code'],
+      'old left 11': ['code'],
+      'old left 12': ['code'],
       'new right 40': ['code'],
       'new right 41': ['code'],
       'new right 42': ['code'],
@@ -148,7 +148,7 @@ describe('createMovedLines', () => {
 
   // The style that colours moves, once the diff has been read
   const pageStyle = () =>
-    Array.from(document.head.querySelectorAll('style')).find((style) => style.textContent?.includes('--diffBlob-'));
+    Array.from(document.head.querySelectorAll('style')).find((style) => style.textContent?.includes('repeating-linear-gradient'));
   const hint = () => document.querySelector('[data-review-order-move-hint]')?.shadowRoot?.querySelector('.hint');
   const code = (path: string, side: 'L' | 'R', line: number) =>
     document.querySelector(`[data-line-anchor="${anchors.get(path)}${side}${line}"]`)!;

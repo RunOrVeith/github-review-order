@@ -58,7 +58,7 @@ It automatically injects:
 ### Moved code
 
 Code that was only moved, possibly re-indented, gets its own colours in the diff, on every PR and with or without a review order:
-- orange where it was removed
+- striped red where it was removed
 - striped green where it was added
 - hovering it says where the other end is, with a link that jumps there; lines that were only re-indented in place say so
 

@@ -4,7 +4,6 @@ import {
   diffCodeSelector,
   diffLineAnchor,
   diffLineAt,
-  diffLineSelector,
   viewsWholePull,
   type DiffLine,
   type DiffSide,
@@ -35,14 +34,8 @@ export interface MoveHint {
 /** Maps each file's path to its anchor on the changes tab. */
 export type FileAnchors = Map<string, string>;
 
-// Moved out: GitHub's red turns orange; it's read from these variables, so they're simply redefined.
-// Mixed with transparent, so it works on light and dark backgrounds alike.
-const MOVED_OUT = `
-  --diffBlob-deletionLine-bgColor: color-mix(in srgb, var(--bgColor-severe-emphasis, #bc4c00) 18%, transparent);
-  --diffBlob-deletionNum-bgColor: color-mix(in srgb, var(--bgColor-severe-emphasis, #bc4c00) 32%, transparent);
-`;
-// Moved in: stripes over GitHub's green
-const MOVED_IN = `
+// Stripes over GitHub's own red and green, in the page's background colour so they suit light and dark themes
+const MOVED = `
   background-image: repeating-linear-gradient(
     135deg,
     transparent 0 6px,
@@ -60,8 +53,8 @@ const IN_PLACE = 'Only the indentation changed';
 const HIDE_DELAY = 200;
 
 /**
- * Colours the lines a PR moves, apart from whitespace: orange where they were
- * removed, striped green where they were added. Hovering one says where its
+ * Stripes the lines a PR moves, apart from whitespace, over GitHub's red where
+ * they were removed and its green where they were added. Hovering one says where its
  * other end is. GitHub only renders the files near the screen and re-renders
  * rows all the time, so this is a stylesheet keyed on GitHub's own attributes
  * rather than marks on the rows.
@@ -160,14 +153,13 @@ function linesOf(range: LineRange, side: DiffSide, anchors: FileAnchors): DiffLi
   return Array.from({ length: range.end - range.start + 1 }, (_, i) => ({ fileAnchor, side, line: range.start + i }));
 }
 
-/** Page CSS that colours the blocks' lines wherever GitHub renders them. */
+/** Page CSS that stripes the blocks' lines wherever GitHub renders them. */
 export function movedLinesCss(blocks: MovedBlock[], anchors: FileAnchors): string {
-  const removed = blocks.flatMap((block) => linesOf(block.from, 'left', anchors)).map(diffLineSelector);
-  // Only the code is striped; GitHub's own green stays on the line numbers so they stay readable
-  const added = blocks.flatMap((block) => linesOf(block.to, 'right', anchors)).map(diffCodeSelector);
-  const rule = (selectors: string[], declarations: string) =>
-    selectors.length > 0 ? `${selectors.join(',\n')} {${declarations}}\n` : '';
-  return rule(removed, MOVED_OUT) + rule(added, MOVED_IN);
+  // Only the code is striped; the line numbers keep GitHub's plain colours so they stay readable
+  const selectors = blocks
+    .flatMap((block) => [...linesOf(block.from, 'left', anchors), ...linesOf(block.to, 'right', anchors)])
+    .map(diffCodeSelector);
+  return selectors.length > 0 ? `${selectors.join(',\n')} {${MOVED}}\n` : '';
 }
 
 /** What hovering each moved line says, keyed by the line's anchor. Lines of one block share their hint. */

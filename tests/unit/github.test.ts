@@ -6,7 +6,6 @@ import {
   diffCodeSelector,
   diffLineAnchor,
   diffLineAt,
-  diffLineSelector,
   fetchPullDiff,
   fetchPullPage,
   fetchViewedSnapshot,
@@ -467,12 +466,13 @@ describe('diff lines', () => {
     expect(diffLineAt(document.body)).toBeNull();
   });
 
-  test("selects only the line's own side in split view", () => {
-    const left = Array.from(document.querySelectorAll(diffLineSelector({ fileAnchor: FILE, side: 'left', line: 223 })));
-    const code = Array.from(document.querySelectorAll(diffCodeSelector({ fileAnchor: FILE, side: 'right', line: 224 })));
+  test("selects only the code of the line's own side in split view", () => {
+    const code = (side: 'left' | 'right', line: number) =>
+      Array.from(document.querySelectorAll(diffCodeSelector({ fileAnchor: FILE, side, line }))).map((cell) => cell.textContent);
 
-    expect(left.map((cell) => cell.textContent)).toEqual(['223', 'old']);
-    expect(code.map((cell) => cell.textContent)).toEqual(['new']);
+    expect(code('left', 223)).toEqual(['old']);
+    expect(code('right', 224)).toEqual(['new']);
+    expect(code('left', 224)).toEqual([]);
   });
 
   test('anchors lines like GitHub does', () => {

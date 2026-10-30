@@ -48,11 +48,9 @@ export const EMBEDDED_DATA_SELECTOR = 'script[data-target="react-app.embeddedDat
 const FILE_ANCHOR = /^diff-[0-9a-f]{64}$/;
 // Without a commit range after it, the changes tab shows the whole PR, like its .diff
 const WHOLE_PULL_TAB = /^\/(files|changes)\/?$/;
-// Each file's diff is a table; every line's number and code cells say which side and line they're for.
-// Unified view has one more number cell, which is empty and has neither.
+// Each file's diff is a table; every line's number and code cells say which side and line they're for
 const DIFF_TABLE_ATTRIBUTE = 'data-diff-anchor';
 const DIFF_LINE_CELL_SELECTOR = 'td[data-diff-side][data-line-number]';
-const EMPTY_NUMBER_CELL_SELECTOR = 'td.empty-diff-line';
 // Only code cells have it
 const LINE_ANCHOR_ATTRIBUTE = 'data-line-anchor';
 
@@ -278,20 +276,9 @@ export interface DiffLine {
   line: number;
 }
 
-function lineCellsSelector({ fileAnchor, side, line }: DiffLine): string {
-  return `table[${DIFF_TABLE_ATTRIBUTE}="${fileAnchor}"] td[data-diff-side="${side}"][data-line-number="${line}"]`;
-}
-
-/** Selects a line's number and code cells in its file's diff, in split and unified view. */
-export function diffLineSelector(line: DiffLine): string {
-  const cells = lineCellsSelector(line);
-  // Unified view's second number cell comes right after the first one of a removed line
-  return line.side === 'left' ? `${cells}, ${cells} + ${EMPTY_NUMBER_CELL_SELECTOR}` : cells;
-}
-
-/** Selects a line's code cell in its file's diff. */
-export function diffCodeSelector(line: DiffLine): string {
-  return `${lineCellsSelector(line)}[${LINE_ANCHOR_ATTRIBUTE}]`;
+/** Selects a line's code cell in its file's diff, in split and unified view. */
+export function diffCodeSelector({ fileAnchor, side, line }: DiffLine): string {
+  return `table[${DIFF_TABLE_ATTRIBUTE}="${fileAnchor}"] td[data-diff-side="${side}"][data-line-number="${line}"][${LINE_ANCHOR_ATTRIBUTE}]`;
 }
 
 /** The diff line a cell, or something inside it, belongs to. */
