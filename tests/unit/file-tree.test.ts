@@ -5,6 +5,7 @@ import {
   createAnchorKeys,
   findTree,
   findTreeEntries,
+  findTreePaths,
   hasUnreadableTree,
   markTreeEntries,
   reviewSteps,
@@ -239,6 +240,12 @@ describe('treeEntryPath', () => {
   });
 });
 
+describe('findTreePaths', () => {
+  test("reads the classic tree's full paths and skips files with only a name", () => {
+    expect(findTreePaths(document)).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+});
+
 describe('reviewSteps', () => {
   test('keeps the first step of a file listed twice', () => {
     expect(reviewSteps([A, B, A].map(file))).toEqual(
@@ -327,6 +334,7 @@ describe('the /changes tree', () => {
 
   test('reads the path from the id', () => {
     expect(treeEntryPath(document.getElementById('src/b.ts')!)).toBe('src/b.ts');
+    expect(findTreePaths(document)).toEqual(['src/a.ts', 'src/b.ts', 'README.md']);
   });
 
   test('marks files by path once they are keyed by anchor', async () => {

@@ -55,6 +55,7 @@ const DIFF_LINE_CELL_SELECTOR = 'td[data-diff-side][data-line-number]';
 const LINE_ANCHOR_ATTRIBUTE = 'data-line-anchor';
 
 interface DiffSummary {
+  path?: unknown;
   pathDigest?: unknown;
   markedAsViewed?: unknown;
 }
@@ -156,8 +157,8 @@ function isTrustedCommenter(comment: Element, login: string | null, author: stri
   );
 }
 
-function embeddedPayload(doc: Document): EmbeddedPayload | null {
-  return parseEmbeddedPayload(doc.querySelector(EMBEDDED_DATA_SELECTOR)?.textContent ?? '');
+function embeddedPayload(root: ParentNode): EmbeddedPayload | null {
+  return parseEmbeddedPayload(root.querySelector(EMBEDDED_DATA_SELECTOR)?.textContent ?? '');
 }
 
 function parseEmbeddedPayload(json: string): EmbeddedPayload | null {
@@ -232,6 +233,13 @@ export function parseViewedSnapshot(json: string): Map<string, boolean> | null {
     }
   }
   return snapshot.size > 0 ? snapshot : null;
+}
+
+/** The paths of the PR's files from the changes page's embedded data; empty without it, as on the classic files tab. */
+export function readChangedPaths(root: ParentNode = document): string[] {
+  const summaries = embeddedPayload(root)?.pullRequestsChangesRoute?.diffSummaries;
+  if (!Array.isArray(summaries)) return [];
+  return (summaries as DiffSummary[]).flatMap((summary) => (typeof summary?.path === 'string' ? [summary.path] : []));
 }
 
 /** The current viewed states, from a fresh copy of the changes page. */

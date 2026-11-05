@@ -84,6 +84,15 @@ export function treeEntryPath(entry: HTMLElement): string {
   return label.textContent?.trim() ?? '';
 }
 
+/** The full paths of the files in the tree, where the markup has them; a file's name alone isn't one. */
+export function findTreePaths(root: ParentNode): string[] {
+  return Array.from(findTreeEntries(root).values()).flatMap((entry) => {
+    if (entry.id && !ANCHOR.test(entry.id) && !GENERATED_ID.test(entry.id)) return [entry.id];
+    const path = entry.querySelector(FILTER_TEXT_SELECTOR)?.textContent?.trim();
+    return path ? [path] : [];
+  });
+}
+
 function isFolder(entry: HTMLElement): boolean {
   return entry.hasAttribute('aria-expanded') || entry.dataset.treeEntryType === 'directory';
 }

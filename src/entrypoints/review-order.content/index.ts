@@ -1,5 +1,6 @@
 import { mount, unmount } from 'svelte';
-import { RequestError, type PullPage, type PullRef } from '@/utils/github';
+import { findTreePaths } from '@/utils/file-tree';
+import { readChangedPaths, RequestError, type PullPage, type PullRef } from '@/utils/github';
 import { isShowPanelMessage } from '@/utils/messages';
 import { goToAnchor } from '@/utils/navigation';
 import type { CachedReview } from '@/utils/progress';
@@ -29,7 +30,7 @@ interface PanelApp {
   expand(): void;
 }
 
-const EMPTY_SECTION = 'The "Review order" section has no numbered list of files.';
+const EMPTY_SECTION = 'The "Review order" section has no list of files.';
 
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
@@ -105,7 +106,9 @@ export default defineContentScript({
         if (active?.key === key && status) status.reviewProblem = loadFailure(error);
         return;
       }
-      const latest = latestReviewOrder(page.posts);
+      // Lets the order name files by the end of their path; read now, since the changes tab has rendered by then
+      const files = new Set([...readChangedPaths(), ...findTreePaths(document)]);
+      const latest = latestReviewOrder(page.posts, files.size > 0 ? files : null);
       const fingerprint = latest && (await reviewFingerprint(page.headSha, latest.items));
       // The user may have left the changes tab while this was loading
       if (active?.key !== key) return;

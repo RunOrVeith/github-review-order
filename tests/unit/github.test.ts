@@ -12,6 +12,7 @@ import {
   isRefreshControl,
   parsePullUrl,
   parseViewedSnapshot,
+  readChangedPaths,
   readRenderedViewToggles,
   readViewToggle,
   RequestError,
@@ -358,6 +359,24 @@ describe('changesViewedStates', () => {
     // Rendered toggles going away doesn't change anything, their states are remembered
     expect(counts(() => main().replaceChildren())).toBe(false);
     expect(counts(() => document.querySelector('body > button')!.setAttribute('aria-pressed', 'true'))).toBe(false);
+  });
+});
+
+describe('readChangedPaths', () => {
+  function page(payload: unknown) {
+    document.body.innerHTML = `<script type="application/json" data-target="react-app.embeddedData">${JSON.stringify({ payload })}</script>`;
+    return document;
+  }
+
+  test("reads every file's path from the /changes page's embedded data", () => {
+    const diffSummaries = [{ path: 'src/a.ts', pathDigest: '1'.repeat(64) }, { pathDigest: '2'.repeat(64) }, { path: 'b.py' }];
+    expect(readChangedPaths(page({ pullRequestsChangesRoute: { diffSummaries } }))).toEqual(['src/a.ts', 'b.py']);
+  });
+
+  test('is empty without file summaries', () => {
+    expect(readChangedPaths(page({ pullRequestsLayoutRoute: {} }))).toEqual([]);
+    document.body.innerHTML = '';
+    expect(readChangedPaths(document)).toEqual([]);
   });
 });
 

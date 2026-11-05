@@ -2,6 +2,8 @@ import type { Locator, Page } from '@playwright/test';
 import { clickToolbarButton, expect, test } from './fixtures';
 import {
   anchorId,
+  CHANGES_STEPS,
+  CHANGES_URL,
   CONVERSATION_URL,
   FILES_STEPS,
   FILES_URL,
@@ -146,13 +148,41 @@ test('keeps the panel and says so when GitHub fails to serve the description', a
   await expect(panel.getByText(`2 / ${FILES_STEPS}`)).toBeVisible();
 });
 
+for (const [tab, url, steps] of [
+  ['classic files', FILES_URL, FILES_STEPS],
+  ['changes', CHANGES_URL, CHANGES_STEPS],
+] as const) {
+  test(`reads an order that names files by their names, on the ${tab} tab`, async ({ context, page }) => {
+    const pr = await servePullRequest(context);
+    pr.section = `
+      <div class="markdown-heading"><h1 class="heading-element">Suggested Review Order</h1><a class="anchor"></a></div>
+      <ol>
+        <li><code>core.ts</code>: the core change</li>
+        <li>Docs and screens: <code>README.md</code> (setup), <code>ui.ts</code> (loading states)</li>
+      </ol>`;
+    await page.goto(url);
+    const panel = page.getByRole('complementary', { name: 'Review order' });
+
+    await expect(panel.getByText(`1 / ${steps}`)).toBeVisible();
+    await expect(panel.getByText('the core change')).toBeVisible();
+    await expect(page).toHaveURL(`${url}#${anchorId('src/core.ts')}`);
+
+    await panel.getByRole('button', { name: 'Next' }).click();
+    await expect(panel.getByText('Docs and screens: setup')).toBeVisible();
+    await expect(page).toHaveURL(`${url}#${anchorId('README.md')}`);
+
+    // The tree numbers each file named in the item
+    await expect(page.locator('[data-review-order-step="3"]')).toContainText('ui.ts');
+  });
+}
+
 test('explains a review order section without files', async ({ context, page }) => {
   const pr = await servePullRequest(context);
   pr.items = [];
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
 
-  await expect(panel.getByText('The "Review order" section has no numbered list of files.')).toBeVisible();
+  await expect(panel.getByText('The "Review order" section has no list of files.')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Next' })).toHaveCount(0);
   await expect(page.locator('[data-review-order-marker]')).toHaveCount(0);
 });

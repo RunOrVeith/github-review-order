@@ -5,7 +5,7 @@ description: Add a "Review order" section to a GitHub pull request description i
 
 # Review order in PR descriptions
 
-The github-review-order extension reads a section of the PR description. It shows a panel on the PR's "Files changed" tab that steps through the listed files in that order, and it numbers them in GitHub's file tree. It only understands the format below. Anything else is ignored without an error, and the panel just doesn't appear, or the affected files are dropped from it.
+The github-review-order extension reads a section of the PR description. It shows a panel on the PR's "Files changed" tab that steps through the listed files in that order, and it numbers them in GitHub's file tree. Write it in the format below. The extension tolerates some variations, listed with the rules, but anything else is ignored without an error, and the panel just doesn't appear, or the affected files are dropped from it.
 
 ## Format
 
@@ -21,13 +21,15 @@ The github-review-order extension reads a section of the PR description. It show
 
 The rules:
 
-1. **Heading.** A real Markdown heading (`#` to `######`) whose whole text is `Review order`, in any case. Bold text (`**Review order**`) and headings with extra words ("Suggested review order") don't count.
-2. **Numbered list.** The first numbered list (`1.`, `2.`, …) after the heading is the order. Text between the heading and the list is fine. A bullet list (`-`, `*`) is not read. The section ends at the next heading, so the list has to come before it.
+1. **Heading.** A Markdown heading (`#` to `######`) that contains the words `review order`, in any case: `Review order`, `Suggested review order` and `Review order:` all work. A line that is only bold text (`**Review order**`) counts as a heading too. The first such heading wins.
+2. **List.** The first numbered list (`1.`, `2.`, …) after the heading is the order. Text between the heading and the list is fine. Only when the section has no numbered list is its first bullet list (`-`, `*`) read instead. The section ends at the next heading, so the list has to come before it.
 3. **One file per item, as `path: description`.**
    - The path comes first, relative to the repository root and exactly as GitHub shows it in the diff, case included. Backticks around it are fine.
-   - Separate path and description with a colon followed by a space. `path — description` and `path - description` don't parse, and that file is silently left out. A colon without a space after it doesn't work either: the item is dropped, or with a one-word description the whole text is taken as the path, which then isn't found in the PR.
-   - The description is optional (`` `README.md` `` alone works). Keep it to one line: a nested list inside an item gets merged into its description.
+   - Separate path and description with a colon followed by a space. `path - description` and `path — description` (a dash between spaces) work too. A colon without a space after it doesn't: with a one-word description the whole text is taken as the path, which then isn't found in the PR.
+   - The description is optional (`` `README.md` `` alone works).
    - Paths with spaces in them aren't supported.
+   - Prefer full paths, but the end of a path also works (`client.ts` or `api/client.ts` for `src/api/client.ts`), as long as only one of the PR's files ends that way; otherwise it shows as "File not found in this PR".
+   - An item may instead start with a label and name several files: ``Tests: `client.test.ts` (timeouts), `retry.test.ts` (backoff)``, or a label with a nested list of `path: description` items under it. Each file the PR changes becomes its own step, in the order named, described by the label and the text after it up to the next file ("Tests: timeouts"). This only happens when the item doesn't start with a file: in `` `client.ts`: uses `retry.ts` `` only `client.ts` is a step.
 4. **List every changed file, once.** Files in the PR that aren't listed get a "!" in the file tree. Listed files that aren't in the PR show "File not found in this PR". If a file is listed twice, its first position is used. Use the new path for renamed files.
 5. **Don't put it inside a quote.** A section inside a `>` blockquote is treated as someone replying to it and ignored.
 

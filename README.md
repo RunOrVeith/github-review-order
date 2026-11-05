@@ -9,7 +9,7 @@ I can't believe I had to build this and it's not a native feature on github.
 The easiest way to see what this does is to install the extension and look at the pull requests in this repo. A quick overview:
 
 When creating a PR, add a section in the description (by hand or via agent) according to `skills/pr-review-order/SKILL.md`.
-It's simple, just a specific header name followed by a numbered list saying what each file change contains:
+It's simple, just a heading that mentions the review order followed by a numbered list saying what each file change contains:
 
 ```markdown
 ## Review order
@@ -19,7 +19,7 @@ It's simple, just a specific header name followed by a numbered list saying what
 3. `README.md`: docs
 ```
 
-If a file doesn't show up, check the rules in the skill. The most common one: it has to be `path: description`, `path - description` doesn't parse.
+The parser is forgiving: headings like "Suggested review order" work, bullet lists too, files can be named by just the end of their path (`Panel.svelte`), and one item can name several files (``Tests: `a.test.ts` (unit), `b.test.ts` (e2e)``). If a file doesn't show up, check the rules in the skill.
 
 If you want your agent to write it for you, copy `skills/pr-review-order` into `~/.claude/skills/` (or `.claude/skills/` in your repo). For other agents, just point them at the `SKILL.md`.
 
