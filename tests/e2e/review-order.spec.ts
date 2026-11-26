@@ -1,5 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
-import { clickToolbarButton, expect, test } from './fixtures';
+import { expect, openPopup, test } from './fixtures';
 import {
   anchorId,
   CONVERSATION_URL,
@@ -406,7 +406,7 @@ test('a double-click minimizes the panel under the pointer, and it stays that wa
   await expect(panel.getByText(second!.description)).toBeVisible();
 });
 
-test('the toolbar button brings back a closed panel where it left off', async ({ context, page }) => {
+test("the toolbar button's popup brings back a closed panel where it left off", async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
@@ -416,23 +416,28 @@ test('the toolbar button brings back a closed panel where it left off', async ({
   await panel.getByRole('button', { name: 'Close' }).click();
   await expect(panel).toHaveCount(0);
 
-  await clickToolbarButton(context);
+  const popup = await openPopup(context);
+  await popup.getByRole('button', { name: 'Show panel' }).click();
   await expect(panel.getByText(`2 / ${FILES_STEPS}`)).toBeVisible();
   await expect(treeEntry(page, first!.path)).toHaveAttribute('data-review-order-step', '1');
+  // It closes, so it isn't in front of the panel it brought back
+  await expect.poll(() => popup.isClosed()).toBe(true);
 
-  // Clicking it again doesn't add a second panel
-  await clickToolbarButton(context);
+  // With the panel showing there's nothing to bring back
+  const again = await openPopup(context);
+  await expect(again.getByRole('button', { name: 'Copy report' })).toBeVisible();
+  await expect(again.getByRole('button', { name: /panel/ })).toHaveCount(0);
   await expect(panel).toHaveCount(1);
 });
 
-test('the toolbar button expands a minimized panel', async ({ context, page }) => {
+test("the toolbar button's popup expands a minimized panel", async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(FILES_URL);
   const panel = page.getByRole('complementary', { name: 'Review order' });
   await page.getByRole('group', { name: 'Drag to move' }).getByText(`1 / ${FILES_STEPS}`).dblclick();
   await expect(panel.getByText(first!.description)).toHaveCount(0);
 
-  await clickToolbarButton(context);
+  await (await openPopup(context)).getByRole('button', { name: 'Expand panel' }).click();
   await expect(panel.getByText(first!.description)).toBeVisible();
 
   // It stays expanded, like expanding it by hand

@@ -1,6 +1,6 @@
 import type { PullRef } from './github';
 
-/** Sent to a tab's content script when the extension's toolbar button is clicked. */
+/** Sent to a tab's content script by the toolbar popup's button that brings back a closed or minimized panel. */
 export const SHOW_PANEL = 'show-panel';
 
 export interface ShowPanelMessage {

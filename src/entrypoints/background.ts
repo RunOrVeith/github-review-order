@@ -1,17 +1,21 @@
+import { isProblemsMessage } from '@/utils/diagnosis';
 import { fetchPullDiff } from '@/utils/github';
-import { isFetchDiffMessage, SHOW_PANEL, type FetchDiffResponse, type ShowPanelMessage } from '@/utils/messages';
+import { isFetchDiffMessage, type FetchDiffResponse } from '@/utils/messages';
 
 export default defineBackground(() => {
   // Firefox builds are Manifest V2, which calls the toolbar button a browser action
   const action = browser.action ?? browser.browserAction;
-  action.onClicked.addListener((tab) => {
-    if (tab.id === undefined) return;
-    const message: ShowPanelMessage = { type: SHOW_PANEL };
-    // Only GitHub tabs have the content script; anywhere else nothing is listening
-    browser.tabs.sendMessage(tab.id, message).catch(() => {});
-  });
 
-  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Marks the toolbar button on tabs whose review order has a problem; its popup explains
+    if (isProblemsMessage(message)) {
+      const tabId = sender.tab?.id;
+      if (tabId === undefined) return;
+      void action.setBadgeText({ tabId, text: message.count > 0 ? '!' : '' });
+      void action.setBadgeBackgroundColor({ tabId, color: '#bf8700' });
+      return;
+    }
+
     if (!isFetchDiffMessage(message)) return;
     fetchPullDiff(message.pr).then(
       (diff) => sendResponse({ diff } satisfies FetchDiffResponse),

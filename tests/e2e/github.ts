@@ -32,10 +32,17 @@ export interface PullComment {
 }
 
 /**
+ * Which version of the conversation page GitHub serves: the classic one, the React overview some
+ * accounts get instead, or one the extension doesn't know, as when GitHub changes it again.
+ */
+export type ConversationLayout = 'classic' | 'overview' | 'unknown';
+
+/**
  * Serves a minimal stand-in for a GitHub PR. Assign `headSha` on the returned
  * object to simulate a new push, `viewed` to change which files GitHub
  * reports as viewed, `items` to edit the description's review order (null
- * leaves the section out), and `comments` to add comments.
+ * leaves the section out), `comments` to add comments, and `layout` to switch
+ * the conversation page's version.
  */
 export async function servePullRequest(context: BrowserContext, headSha = 'a'.repeat(40)) {
   const pr = {
@@ -47,6 +54,7 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
     // Set to an error status to make GitHub fail to serve the description
     conversationStatus: 200,
     viewed: new Set([reviewOrder[1]!.path]),
+    layout: 'classic' as ConversationLayout,
   };
 
   await context.route('https://github.com/**', async (route) => {
@@ -54,7 +62,8 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
     if (pathname === '/acme/repo/pull/1') {
       await new Promise((resolve) => setTimeout(resolve, pr.conversationDelay));
       if (pr.conversationStatus !== 200) return route.fulfill({ status: pr.conversationStatus });
-      return route.fulfill({ contentType: 'text/html', body: conversationPage(pr) });
+      const page = { classic: conversationPage, overview: overviewPage, unknown: unknownPage }[pr.layout];
+      return route.fulfill({ contentType: 'text/html', body: page(pr) });
     }
     if (pathname === '/acme/repo/pull/1/files') {
       return route.fulfill({ contentType: 'text/html', body: filesPage() });
@@ -71,10 +80,19 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
   return pr;
 }
 
-function conversationPage(pr: { headSha: string; items: ReviewOrder | null; comments: PullComment[] }): string {
-  const section = (items: ReviewOrder) => `
-    <div class="markdown-heading"><h2 class="heading-element">Review order</h2><a class="anchor"></a></div>
-    <ol>${items.map((item) => `<li><code>${item.path}</code>: ${item.description}</li>`).join('')}</ol>`;
+interface ConversationContent {
+  headSha: string;
+  items: ReviewOrder | null;
+  comments: PullComment[];
+}
+
+const section = (items: ReviewOrder) => `
+  <div class="markdown-heading"><h2 class="heading-element">Review order</h2><a class="anchor"></a></div>
+  <ol>${items.map((item) => `<li><code>${item.path}</code>: ${item.description}</li>`).join('')}</ol>`;
+
+const layoutData = (pr: ConversationContent) => ({ headSha: pr.headSha, author: { login: 'alice' } });
+
+function conversationPage(pr: ConversationContent): string {
   const header = (login: string, role: string) => `
     <div class="timeline-comment-header">
       <a class="author" href="/${login}">${login}</a>${role && `<span class="Label">${role}</span>`}
@@ -90,7 +108,7 @@ function conversationPage(pr: { headSha: string; items: ReviewOrder | null; comm
         </div>
       </div>`,
   );
-  const data = { payload: { pullRequestsLayoutRoute: { pullRequest: { headSha: pr.headSha, author: { login: 'alice' } } } } };
+  const data = { payload: { pullRequestsLayoutRoute: { pullRequest: layoutData(pr) } } };
   return `<!doctype html>
     <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(data)}</script>
     <div id="pullrequest-1" class="timeline-comment-group">
@@ -98,6 +116,35 @@ function conversationPage(pr: { headSha: string; items: ReviewOrder | null; comm
       <div class="comment-body markdown-body"><p>Adds the thing.</p>${pr.items ? section(pr.items) : ''}</div>
     </div>
     ${comments.join('')}`;
+}
+
+/**
+ * GitHub's React overview page: no comment markup, and the description only as rendered HTML in
+ * the embedded data. Comments load separately, so they aren't on it.
+ */
+function overviewPage(pr: ConversationContent): string {
+  const description = `<p>Adds the thing.</p>${pr.items ? section(pr.items) : ''}`;
+  const data = {
+    payload: {
+      pullRequestsOverviewIndexRoute: { description, descriptionText: 'Adds the thing.' },
+      pullRequestsLayoutRoute: { pullRequest: layoutData(pr) },
+    },
+  };
+  return `<!doctype html>
+    <react-app app-name="repo">
+      <section><h2 class="sr-only">Description</h2><div class="markdown-body safe-html-box__Uwc6Al">${description}</div></section>
+      <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(data)}</script>
+    </react-app>`;
+}
+
+/** A conversation page in a version no layout recognises. */
+function unknownPage(pr: ConversationContent): string {
+  const data = { payload: { pullRequestsSomethingNewRoute: {}, pullRequestsLayoutRoute: { pullRequest: layoutData(pr) } } };
+  return `<!doctype html>
+    <react-app app-name="repo">
+      <div class="markdown-body__new">${pr.items ? section(pr.items) : ''}</div>
+      <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(data)}</script>
+    </react-app>`;
 }
 
 /** A changed file that the review order leaves out. */

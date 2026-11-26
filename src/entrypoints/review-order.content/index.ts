@@ -1,8 +1,18 @@
 import { mount, unmount } from 'svelte';
+import {
+  conversationProblems,
+  EMPTY_SECTION,
+  isDiagnoseMessage,
+  PROBLEMS_MESSAGE,
+  type ConversationState,
+  type Diagnosis,
+  type ProblemsMessage,
+} from '@/utils/diagnosis';
 import { RequestError, type PullPage, type PullRef } from '@/utils/github';
 import { isShowPanelMessage } from '@/utils/messages';
 import { goToAnchor } from '@/utils/navigation';
 import type { CachedReview } from '@/utils/progress';
+import { diagnose } from './diagnose';
 import { createMovedLines, type MovedLines } from './moved-lines';
 import Panel from './Panel.svelte';
 import { PanelStatus } from './status.svelte';
@@ -29,8 +39,6 @@ interface PanelApp {
   expand(): void;
 }
 
-const EMPTY_SECTION = 'The "Review order" section has no numbered list of files.';
-
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
   matches: ['https://github.com/*'],
@@ -54,6 +62,27 @@ export default defineContentScript({
     // A re-read of the PR in progress, so another one isn't started on top of it
     let recheck: Promise<void> | null = null;
     let lastRead = 0;
+    // How reading the active PR went, for the toolbar button's diagnosis; null off a changes tab
+    let conversation: ConversationState | null = null;
+    // Whether the user closed the panel on the active PR
+    let closed = false;
+    // Whether the shown panel is minimized to just its step and arrows
+    let minimized = false;
+    // The problem count the badge last showed; null so the first one is always sent
+    let reportedProblems: number | null = null;
+
+    /** Problems that keep the order from working only show on the toolbar button, never by opening the panel. */
+    function setConversation(state: ConversationState | null) {
+      conversation = state;
+      const count = conversationProblems(state).length;
+      if (count === reportedProblems) return;
+      reportedProblems = count;
+      const message: ProblemsMessage = { type: PROBLEMS_MESSAGE, count };
+      // Throws or rejects once the extension was reloaded or updated, when there's no badge left to update
+      try {
+        browser.runtime.sendMessage(message).catch(() => {});
+      } catch {}
+    }
 
     function removePanel() {
       ui?.remove();
@@ -80,6 +109,8 @@ export default defineContentScript({
       }
 
       active = pr && key ? { key, pr } : null;
+      closed = false;
+      setConversation(active ? { state: 'loading' } : null);
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
       moves?.stop();
@@ -101,14 +132,25 @@ export default defineContentScript({
       try {
         page = await fetchPullPage(pr);
       } catch (error) {
+        if (active?.key !== key) return;
+        setConversation({ state: 'failed', reason: loadFailure(error) });
         // Whatever is shown stays; a failed request says nothing about the PR's review order
-        if (active?.key === key && status) status.reviewProblem = loadFailure(error);
+        if (status) status.reviewProblem = loadFailure(error);
         return;
       }
       const latest = latestReviewOrder(page.posts);
       const fingerprint = latest && (await reviewFingerprint(page.headSha, latest.items));
       // The user may have left the changes tab while this was loading
       if (active?.key !== key) return;
+      setConversation({
+        state: 'read',
+        layout: page.layout,
+        posts: page.posts.length,
+        headSha: page.headSha,
+        limitations: page.limitations,
+        review: latest && { source: describePost(pr, latest.post).text, items: latest.items.length },
+      });
+      // A page no layout recognises hides the panel like one without an order; the diagnosis says why
       if (!latest || !fingerprint) {
         void forgetReview(pr);
         return hide();
@@ -145,6 +187,7 @@ export default defineContentScript({
         ]);
       const viewedState = viewed;
       if (active?.key !== key || !viewedState) return;
+      minimized = initialMinimized;
 
       const newStatus = new PanelStatus();
       showStatus(newStatus, pr, review);
@@ -175,8 +218,14 @@ export default defineContentScript({
               onMove: (position) => void panelPosition.setValue(position),
               onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
               onAutoAdvanceChange: (advance) => void autoAdvance.setValue(advance),
-              onMinimizedChange: (minimized) => void panelMinimized.setValue(minimized),
-              onClose: hide,
+              onMinimizedChange: (value) => {
+                minimized = value;
+                void panelMinimized.setValue(value);
+              },
+              onClose: () => {
+                closed = true;
+                hide();
+              },
             },
           }),
         onRemove: (app) => {
@@ -207,24 +256,29 @@ export default defineContentScript({
 
     /** Picks up new pushes and description edits while the changes tab stays open. */
     function recheckOpenPanel(always = false) {
-      // A closed panel stays closed until the changes tab is opened again or the toolbar button is clicked
+      // A closed panel stays closed until the changes tab is opened again or the toolbar popup brings it back
       if (!active || !ui || recheck) return;
       // Each check downloads the whole conversation page, which is large on busy PRs
       if (!always && Date.now() - lastRead < RECHECK_INTERVAL) return;
       recheck = show(active.pr, active.key, true).finally(() => (recheck = null));
     }
 
-    /** Brings back a closed or minimized panel when the extension's toolbar button is clicked. */
+    /** Brings back a closed or minimized panel when asked from the toolbar button's popup. */
     function showPanel() {
       // Off the changes tab there's no panel to show
       if (!active) return;
+      closed = false;
       if (ui) return ui.mounted?.expand();
       // Re-reads the PR, since it may have changed while the panel was closed
       if (!recheck) recheck = show(active.pr, active.key).finally(() => (recheck = null));
     }
 
-    const onMessage = (message: unknown) => {
-      if (isShowPanelMessage(message)) showPanel();
+    // The toolbar button's popup asks what was found on this tab, and can bring back the panel
+    const onMessage = (message: unknown, _sender: unknown, sendResponse: (diagnosis: Diagnosis) => void) => {
+      if (isShowPanelMessage(message)) return void showPanel();
+      if (!isDiagnoseMessage(message)) return;
+      const panel = ui ? (minimized ? 'minimized' : 'shown') : closed ? 'closed' : 'hidden';
+      sendResponse(diagnose({ url: location.href, pr: active?.key ?? null, conversation, panel }));
     };
     browser.runtime.onMessage.addListener(onMessage);
     ctx.onInvalidated(() => browser.runtime.onMessage.removeListener(onMessage));

@@ -29,7 +29,7 @@ Contributors can also comment with a new order later, the latest one is used (un
 
 ### Widget 
 When you open the diff view, you get an overlay widget injected into the page. You can drag it around if it bothers you where it is, or double click to minimize/maximize.
-If you closed or minimized it, click the extension's button in the browser toolbar to bring it back.
+If you closed or minimized it, click the extension's button in the browser toolbar and then `Show panel` to bring it back.
 
 ![overlay screenshot](screenshots/overlay.png)
 
@@ -65,6 +65,10 @@ Code that was only moved, possibly re-indented, gets its own colours in the diff
 Whitespace is ignored when comparing, and a block has to be at least three lines long (or a line re-indented in place), so common lines like imports and closing brackets don't light up everywhere.
 To read the whole diff, the extension fetches the PR's `.diff` in the background, which is why it asks for access to `github.com` and `patch-diff.githubusercontent.com`.
 
+### Toolbar button
+
+If the widget doesn't show up, click the extension's button in the browser toolbar. It shows what was found on the current tab: which version of GitHub's PR page was read, the review order and where it's from, the file tree, and anything that keeps the widget from working. `Copy report` copies all of it, for an issue. The button gets a `!` badge when there's a problem. If you closed or minimized the widget, `Show panel` / `Expand panel` there brings it back.
+
 ### Examples
 
 - https://github.com/RunOrVeith/github-review-order/pull/12/changes
@@ -74,6 +78,7 @@ To read the whole diff, the extension fetches the PR's `.diff` in the background
 ### Known limitations
 
 - comments hidden behind github's "load more" aren't read, so a newer order in there is ignored
+- github is rolling out a new PR overview page. It works too, but it loads comments separately, so there only the description's order is read
 - it works off github's page, so if they change their UI it will probably break until I fix it
 - no Safari, I haven't tried it
 - moved code is only coloured when looking at all of a PR's commits, not a selection of them, and a new push is picked up by GitHub's Refresh only while the panel is open

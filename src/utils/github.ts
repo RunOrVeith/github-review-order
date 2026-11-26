@@ -5,6 +5,7 @@ export interface PullRef {
   isChangesTab: boolean;
 }
 
+import { readConversation } from './conversation';
 import { sha256Hex } from './hash';
 
 /** A description, comment or review summary on the conversation page. */
@@ -25,19 +26,16 @@ export interface PullPage {
   /** The description, then the comments that may set a newer review order, oldest first. */
   posts: PullPost[];
   headSha: string | null;
+  /** Which version of GitHub's conversation page was read, or null when none was recognised. */
+  layout: string | null;
+  /** What the layout couldn't read, e.g. comments that load separately. */
+  limitations: string[];
 }
 
 // Everything that depends on GitHub's markup lives here
 const PULL_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(\/.*)?$/;
 const CHANGES_TAB = /^\/(files|changes)(\/|$)/;
-const COMMENT_BODY_SELECTOR = '.comment-body.markdown-body';
-const DESCRIPTION_SELECTOR = `[id^="pullrequest-"] ${COMMENT_BODY_SELECTOR}`;
-// A body belongs to the nearest element with an id. Inline review comments (discussion_r123) are about a
-// line of code and don't count.
-const TIMELINE_COMMENT_ID = /^(issuecomment|pullrequestreview)-\d+$/;
-const MINIMIZED_SELECTOR = '.minimized-comment';
-// GitHub labels commenters by their role in the repo; these can usually edit the description anyway
-const TRUSTED_ROLE = /^(owner|member|collaborator|author)$/i;
+// Reading the posts depends on which version of the conversation page GitHub serves, see ./conversation
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const REFRESH_LABEL = /^(refresh|reload)\b/i;
 // Each rendered file has a "Viewed" / "Not Viewed" toggle; aria-pressed is its state
@@ -60,7 +58,7 @@ interface DiffSummary {
 }
 
 /** The parts of the embedded data this reads; anything in it may be missing or shaped differently. */
-interface EmbeddedPayload {
+interface EmbeddedPayload extends Record<string, unknown> {
   pullRequestsChangesRoute?: { diffSummaries?: unknown };
   pullRequestsLayoutRoute?: { pullRequest?: { headSha?: unknown; author?: { login?: unknown } } };
 }
@@ -107,6 +105,7 @@ export async function fetchPullDiff(pr: Pick<PullRef, 'owner' | 'repo' | 'number
 /**
  * The changes tab doesn't contain the description, so it's read from the conversation page.
  * Rejects when the page can't be loaded, which says nothing about whether it has a review order.
+ * A page no layout recognises has no posts and a null layout.
  */
 export async function fetchPullPage(pr: PullRef): Promise<PullPage> {
   const url = new URL(`/${pr.owner}/${pr.repo}/pull/${pr.number}`, location.origin);
@@ -114,46 +113,17 @@ export async function fetchPullPage(pr: PullRef): Promise<PullPage> {
   if (!response.ok) throw new RequestError(response.status);
 
   const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-  const pull = embeddedPayload(doc)?.pullRequestsLayoutRoute?.pullRequest;
+  const payload = embeddedPayload(doc);
+  const pull = payload?.pullRequestsLayoutRoute?.pullRequest;
   const sha = pull?.headSha;
   const author = pull?.author?.login;
+  const reading = readConversation({ doc, payload, author: typeof author === 'string' ? author : null });
   return {
-    posts: reviewOrderPosts(doc, typeof author === 'string' ? author : null),
+    posts: reading?.posts ?? [],
     headSha: typeof sha === 'string' && COMMIT_SHA.test(sha) ? sha : null,
+    layout: reading?.layout ?? null,
+    limitations: reading?.limitations ?? [],
   };
-}
-
-/**
- * The description, then the comments and review summaries by the PR's author
- * or its collaborators. Anyone can comment, but only they may change the order.
- */
-function reviewOrderPosts(doc: Document, author: string | null): PullPost[] {
-  const bodies = Array.from(doc.querySelectorAll(COMMENT_BODY_SELECTOR));
-  // The description has always been the first body, so that stays if its container changes
-  const description = doc.querySelector(DESCRIPTION_SELECTOR) ?? bodies[0];
-  if (!description) return [];
-
-  const posts: PullPost[] = [{ kind: 'description', author, anchor: null, body: description }];
-  for (const body of bodies) {
-    if (body === description || body.closest(MINIMIZED_SELECTOR)) continue;
-    const comment = body.parentElement?.closest('[id]');
-    if (!comment || !TIMELINE_COMMENT_ID.test(comment.id)) continue;
-
-    const login = comment.querySelector('a.author')?.textContent?.trim() || null;
-    if (!isTrustedCommenter(comment, login, author)) continue;
-    const kind = comment.id.startsWith('pullrequestreview-') ? 'review' : 'comment';
-    posts.push({ kind, author: login, anchor: comment.id, body });
-  }
-  return posts;
-}
-
-function isTrustedCommenter(comment: Element, login: string | null, author: string | null): boolean {
-  if (author && login === author) return true;
-
-  // Markdown can't set classes, so labels are GitHub's, but those inside the body are skipped anyway
-  return Array.from(comment.querySelectorAll('.Label')).some(
-    (label) => !label.closest(COMMENT_BODY_SELECTOR) && TRUSTED_ROLE.test(label.textContent?.trim() ?? ''),
-  );
 }
 
 function embeddedPayload(doc: Document): EmbeddedPayload | null {
@@ -162,7 +132,8 @@ function embeddedPayload(doc: Document): EmbeddedPayload | null {
 
 function parseEmbeddedPayload(json: string): EmbeddedPayload | null {
   try {
-    return JSON.parse(json)?.payload ?? null;
+    const payload: unknown = JSON.parse(json)?.payload;
+    return payload && typeof payload === 'object' ? (payload as EmbeddedPayload) : null;
   } catch {
     return null;
   }
