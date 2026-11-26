@@ -12,6 +12,8 @@ import {
   readViewToggle,
   RequestError,
 } from '@/utils/github';
+import { COMMENTS_NOT_READ } from '@/utils/conversation/overview';
+import { latestReviewOrder } from '@/utils/review-order';
 
 describe('parsePullUrl', () => {
   test.each([
@@ -193,6 +195,71 @@ describe('fetchPullPage', () => {
 
       expect(bodies).toEqual(['description', 'by a collaborator']);
     });
+  });
+
+  describe("GitHub's overview page", () => {
+    // Trimmed from GitHub's React overview page, which some accounts get instead of the classic one:
+    // no comment-body markup, and the description only as rendered HTML in the embedded data
+    const overviewPage = (description: unknown) => `
+      <react-app app-name="repo" initial-path="/acme/repo/pull/12">
+        <section class="container__qcj0r_"><h2 class="sr-only">Description</h2>
+          <div class="markdown-body safe-html-box__Uwc6Al">${typeof description === 'string' ? description : ''}</div>
+        </section>
+        <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify({
+          payload: {
+            pullRequestsOverviewIndexRoute: { description, descriptionText: '## Review order' },
+            pullRequestsLayoutRoute: { pullRequest: { headSha: 'a'.repeat(40), author: { login: 'alice' } } },
+          },
+        })}</script>
+      </react-app>`;
+
+    test('reads the description from the embedded data', async () => {
+      const description = '<h2 dir="auto">Review order</h2>\n<ol dir="auto">\n<li><code>a.ts</code>: first</li>\n</ol>';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(overviewPage(description))));
+
+      const page = await fetchPullPage(pr);
+
+      expect(page).toMatchObject({ layout: 'overview', headSha: 'a'.repeat(40), limitations: [COMMENTS_NOT_READ] });
+      expect(page.posts).toEqual([
+        { kind: 'description', author: 'alice', anchor: null, body: expect.objectContaining({ innerHTML: description }) },
+      ]);
+      expect(latestReviewOrder(page.posts)?.items).toEqual([{ path: 'a.ts', description: 'first' }]);
+    });
+
+    test('reads an empty description', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(overviewPage(''))));
+
+      const page = await fetchPullPage(pr);
+      expect(page.layout).toBe('overview');
+      expect(latestReviewOrder(page.posts)).toBeNull();
+    });
+
+    test('parses the description into the fetched page, where nothing in it loads or runs', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(overviewPage('<img src="x" onerror="alert(1)">'))));
+
+      const [post] = (await fetchPullPage(pr)).posts;
+      expect(post!.body.ownerDocument).not.toBe(document);
+    });
+  });
+
+  test('recognises no layout when GitHub changed the page again', async () => {
+    const pages = [
+      // The overview's route without the description where it's expected
+      `<script type="application/json" data-target="react-app.embeddedData">${JSON.stringify({
+        payload: { pullRequestsOverviewIndexRoute: { body: '<h2>Review order</h2>' } },
+      })}</script>`,
+      '<div class="markdown-body"><h2>Review order</h2></div>',
+      '',
+    ];
+    for (const body of pages) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+      expect(await fetchPullPage(pr)).toMatchObject({ layout: null, posts: [], limitations: [] });
+    }
+  });
+
+  test('says the classic page was read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<div class="comment-body markdown-body"></div>')));
+    expect(await fetchPullPage(pr)).toMatchObject({ layout: 'classic', limitations: [] });
   });
 
   test('rejects when the page fails to load', async () => {
