@@ -54,6 +54,10 @@ It automatically injects:
 ![file tree](screenshots/file_tree.png)
 
 
+### Toolbar button
+
+If the widget doesn't show up, click the extension's button in the browser toolbar. It shows what was found on the current tab: which version of GitHub's PR page was read, the review order and where it's from, the file tree, and anything that keeps the widget from working. `Copy report` copies all of it, for an issue. The button gets a `!` badge when there's a problem.
+
 ### Examples
 
 - https://github.com/RunOrVeith/github-review-order/pull/12/changes
@@ -63,6 +67,7 @@ It automatically injects:
 ### Known limitations
 
 - comments hidden behind github's "load more" aren't read, so a newer order in there is ignored
+- github is rolling out a new PR overview page. It works too, but it loads comments separately, so there only the description's order is read
 - it works off github's page, so if they change their UI it will probably break until I fix it
 - no Safari, I haven't tried it
 

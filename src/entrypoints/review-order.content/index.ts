@@ -1,6 +1,16 @@
 import { mount, unmount } from 'svelte';
+import {
+  conversationProblems,
+  EMPTY_SECTION,
+  isDiagnoseMessage,
+  PROBLEMS_MESSAGE,
+  type ConversationState,
+  type Diagnosis,
+  type ProblemsMessage,
+} from '@/utils/diagnosis';
 import { RequestError, type PullPage, type PullRef } from '@/utils/github';
 import type { CachedReview } from '@/utils/progress';
+import { diagnose } from './diagnose';
 import Panel from './Panel.svelte';
 import { PanelStatus } from './status.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
@@ -20,8 +30,6 @@ interface Review {
 // Coming back to the tab re-reads the PR at most this often; GitHub's Refresh button always does.
 // The e2e build sets it to 0 so tests don't have to wait.
 const RECHECK_INTERVAL = Number(import.meta.env.WXT_RECHECK_INTERVAL ?? 30_000);
-
-const EMPTY_SECTION = 'The "Review order" section has no numbered list of files.';
 
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
@@ -43,6 +51,25 @@ export default defineContentScript({
     let status: PanelStatus | undefined;
     let recheck: Promise<void> | null = null;
     let lastRead = 0;
+    // How reading the active PR went, for the toolbar button's diagnosis; null off a changes tab
+    let conversation: ConversationState | null = null;
+    // Whether the user closed the panel on the active PR
+    let closed = false;
+    // The problem count the badge last showed; null so the first one is always sent
+    let reportedProblems: number | null = null;
+
+    /** Problems that keep the order from working only show on the toolbar button, never by opening the panel. */
+    function setConversation(state: ConversationState | null) {
+      conversation = state;
+      const count = conversationProblems(state).length;
+      if (count === reportedProblems) return;
+      reportedProblems = count;
+      const message: ProblemsMessage = { type: PROBLEMS_MESSAGE, count };
+      // Throws or rejects once the extension was reloaded or updated, when there's no badge left to update
+      try {
+        browser.runtime.sendMessage(message).catch(() => {});
+      } catch {}
+    }
 
     function removePanel() {
       ui?.remove();
@@ -65,6 +92,8 @@ export default defineContentScript({
       if (key === (active?.key ?? null)) return;
 
       active = pr && key ? { key, pr } : null;
+      closed = false;
+      setConversation(active ? { state: 'loading' } : null);
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
       hide();
@@ -84,14 +113,25 @@ export default defineContentScript({
       try {
         page = await fetchPullPage(pr);
       } catch (error) {
+        if (active?.key !== key) return;
+        setConversation({ state: 'failed', reason: loadFailure(error) });
         // Whatever is shown stays; a failed request says nothing about the PR's review order
-        if (active?.key === key && status) status.reviewProblem = loadFailure(error);
+        if (status) status.reviewProblem = loadFailure(error);
         return;
       }
       const latest = latestReviewOrder(page.posts);
       const fingerprint = latest && (await reviewFingerprint(page.headSha, latest.items));
       // The user may have left the changes tab while this was loading
       if (active?.key !== key) return;
+      setConversation({
+        state: 'read',
+        layout: page.layout,
+        posts: page.posts.length,
+        headSha: page.headSha,
+        limitations: page.limitations,
+        review: latest && { source: describePost(pr, latest.post).text, items: latest.items.length },
+      });
+      // A page no layout recognises hides the panel like one without an order; the diagnosis says why
       if (!latest || !fingerprint) {
         void forgetReview(pr);
         return hide();
@@ -156,7 +196,10 @@ export default defineContentScript({
               onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
               onAutoAdvanceChange: (advance) => void autoAdvance.setValue(advance),
               onMinimizedChange: (minimized) => void panelMinimized.setValue(minimized),
-              onClose: hide,
+              onClose: () => {
+                closed = true;
+                hide();
+              },
             },
           }),
         onRemove: (app) => {
@@ -206,6 +249,14 @@ export default defineContentScript({
       },
       { capture: true },
     );
+    // The toolbar button's popup asks what was found on this tab
+    const onMessage = (message: unknown, _sender: unknown, sendResponse: (diagnosis: Diagnosis) => void) => {
+      if (!isDiagnoseMessage(message)) return;
+      const panel = ui ? 'shown' : closed ? 'closed' : 'hidden';
+      sendResponse(diagnose({ url: location.href, pr: active?.key ?? null, conversation, panel }));
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    ctx.onInvalidated(() => browser.runtime.onMessage.removeListener(onMessage));
     // Coming back to the tab, e.g. after pushing from a terminal
     ctx.addEventListener(window, 'focus', () => recheckOpenPanel());
     ctx.addEventListener(document, 'visibilitychange', () => {
