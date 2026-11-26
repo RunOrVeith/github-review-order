@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, setNumberSetting, setSetting, test } from './fixtures';
 import { anchorId, CHANGES_URL, MOVED, servePullRequest } from './github';
 
 const RED = 'rgb(255, 235, 233)';
@@ -59,4 +59,42 @@ test('shows no stripes while only some commits are shown', async ({ context, pag
 
   await page.evaluate(() => history.pushState(null, '', '/acme/repo/pull/1/changes'));
   await expect.poll(async () => (await background(page, MOVED.from.path, 'L', MOVED.from.start)).image).toContain(STRIPES);
+});
+
+test('can be turned off and on again in the popup', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(CHANGES_URL);
+  const stripes = async () => (await background(page, MOVED.from.path, 'L', MOVED.from.start)).image;
+  await expect.poll(stripes).toContain(STRIPES);
+
+  await setSetting(context, 'Show moved lines', false);
+  await expect.poll(stripes).toBe('none');
+  await code(page, MOVED.from.path, 'L', MOVED.from.start).hover();
+  await expect(hint(page)).toHaveCount(0);
+
+  // Stays off on other PRs and after reloading
+  await page.reload();
+  await expect(page.getByRole('complementary', { name: 'Review order' })).toBeVisible();
+  expect(await stripes()).toBe('none');
+
+  await setSetting(context, 'Show moved lines', true);
+  await expect.poll(stripes).toContain(STRIPES);
+});
+
+test('only stripes moves of at least as many lines as the popup says', async ({ context, page }) => {
+  await servePullRequest(context);
+  await page.goto(CHANGES_URL);
+  const stripes = async () => (await background(page, MOVED.from.path, 'L', MOVED.from.start)).image;
+  await expect.poll(stripes).toContain(STRIPES);
+
+  // The fixture moves three lines
+  await setNumberSetting(context, 'Minimum lines', MOVED.lines.length + 1);
+  await expect.poll(stripes).toBe('none');
+
+  await page.reload();
+  await expect(page.getByRole('complementary', { name: 'Review order' })).toBeVisible();
+  expect(await stripes()).toBe('none');
+
+  await setNumberSetting(context, 'Minimum lines', MOVED.lines.length);
+  await expect.poll(stripes).toContain(STRIPES);
 });

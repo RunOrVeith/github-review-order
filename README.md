@@ -40,9 +40,7 @@ What it does:
 - the description of the file is taken from the PR description/comments. You can see where it is taken from when hovering the question mark
 - files that are not part of the review order are stepped through at the end
 
-**Options**
-- `Skip viewed`: The arrow keys ignore files that have the `viewed` marker from github checked and take you to the next unviewed one
-- `Auto-advance`: Takes you to the next file in order if you mark a file as `viewed` automatically
+How it steps through the files can be changed in the settings, see [Toolbar button](#toolbar-button).
 
 ### File tree
 
@@ -57,17 +55,25 @@ It automatically injects:
 
 ### Moved code
 
-Code that was only moved, possibly re-indented, gets its own colours in the diff, on every PR and with or without a review order:
+Code that was only moved, possibly re-indented, gets its own colours in the diff, on every PR and with or without a review order (unless you turn `Show moved lines` off in the settings):
 - striped red where it was removed
 - striped green where it was added
 - hovering it says where the other end is, with a link that jumps there; lines that were only re-indented in place say so
 
-Whitespace is ignored when comparing, and a block has to be at least three lines long (or a line re-indented in place), so common lines like imports and closing brackets don't light up everywhere.
+Whitespace is ignored when comparing, and a block has to be at least three lines long (or a line re-indented in place), so common lines like imports and closing brackets don't light up everywhere. The three lines can be changed with `Minimum lines` in the settings.
 To read the whole diff, the extension fetches the PR's `.diff` in the background, which is why it asks for access to `github.com` and `patch-diff.githubusercontent.com`.
 
 ### Toolbar button
 
-If the widget doesn't show up, click the extension's button in the browser toolbar. It shows what was found on the current tab: which version of GitHub's PR page was read, the review order and where it's from, the file tree, and anything that keeps the widget from working. `Copy report` copies all of it, for an issue. The button gets a `!` badge when there's a problem. If you closed or minimized the widget, `Show panel` / `Expand panel` there brings it back.
+Clicking the extension's button in the browser toolbar opens its settings, which apply to every PR and take effect right away:
+- `Skip viewed`: the arrows ignore files that have github's `viewed` marker checked and take you to the next unviewed one
+- `Auto-advance`: marking the current file as `viewed` takes you to the next one
+- `Show moved lines`: stripes code that was only moved, see [Moved code](#moved-code)
+  - `Minimum lines`: how many lines moved code needs before it's striped, 3 by default. Lower catches smaller moves, but also common lines like imports
+
+The three toggles are on by default.
+
+If the widget doesn't show up, the same popup shows what was found on the current tab: which version of GitHub's PR page was read, the review order and where it's from, the file tree, and anything that keeps the widget from working. `Copy report` copies all of it, for an issue. The button gets a `!` badge when there's a problem. If you closed or minimized the widget, `Show panel` / `Expand panel` there brings it back.
 
 ### Examples
 

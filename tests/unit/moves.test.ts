@@ -52,6 +52,21 @@ test('skips matches of fewer than three lines elsewhere, which are mostly common
   expect(findMovedBlocks({ removed: lines('a.py', 1, imports, 1), added: lines('b.py', 1, imports, 2) })).toEqual([]);
 });
 
+test('takes how many lines a move needs as an option, but re-indenting in place still counts from one', () => {
+  const imports = ['from divemate.messaging.outreach import errors', 'from divemate.messaging import service'];
+  const moved = { removed: lines('a.py', 1, imports, 1), added: lines('b.py', 1, imports, 2) };
+  expect(findMovedBlocks(moved, { minLines: 2 })).toEqual([
+    { from: { path: 'a.py', start: 1, end: 2 }, to: { path: 'b.py', start: 1, end: 2 }, inPlace: false },
+  ]);
+  expect(findMovedBlocks({ removed: lines('src/old.ts', 10, FUNCTION, 1), added: lines('src/new.ts', 40, FUNCTION, 2) }, { minLines: 5 })).toEqual([]);
+
+  const reindented = {
+    removed: lines('src/a.py', 5, ['result = compute_everything(inputs)'], 3),
+    added: lines('src/a.py', 5, ['    result = compute_everything(inputs)'], 3),
+  };
+  expect(findMovedBlocks(reindented, { minLines: 10 })).toHaveLength(1);
+});
+
 test('skips blocks with too little text to tell, like closing brackets', () => {
   const brackets = ['  }', '  });', '}'];
   expect(findMovedBlocks({ removed: lines('a.ts', 1, brackets, 1), added: lines('b.ts', 9, brackets, 2) })).toEqual([]);

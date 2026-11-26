@@ -208,6 +208,29 @@ describe('createMovedLines', () => {
     expect(pageStyle()!.media).toBe('all');
   });
 
+  test('finds the moves again with another minimum, without fetching the diff again', async () => {
+    await start();
+    const selector = `${anchors.get(OLD)}"] td[data-diff-side="left"][data-line-number="11"]`;
+
+    // The fixture moves three lines
+    lines!.setOptions({ minLines: 4 });
+    await vi.waitFor(() => expect(pageStyle()).toBeUndefined());
+    hover(code(OLD, 'L', 11));
+    expect(hint()).toBeUndefined();
+
+    lines!.setOptions({ minLines: 3 });
+    await vi.waitFor(() => expect(pageStyle()?.textContent).toContain(selector));
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  test('starts with the minimum it was given', async () => {
+    lines = createMovedLines(ctx, pr, WHOLE, { minLines: 4 });
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve));
+
+    expect(pageStyle()).toBeUndefined();
+  });
+
   test('colours nothing when the diff could not be fetched', async () => {
     sendMessage.mockResolvedValue({ error: 'GitHub responded with 404' });
     lines = createMovedLines(ctx, pr, WHOLE);

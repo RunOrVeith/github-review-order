@@ -10,9 +10,9 @@ import {
   type PullRef,
 } from '@/utils/github';
 import { FETCH_DIFF, type FetchDiffMessage, type FetchDiffResponse } from '@/utils/messages';
-import { findMovedBlocks, type LineRange, type MovedBlock } from '@/utils/moves';
+import { findMovedBlocks, type LineRange, type MovedBlock, type MoveOptions } from '@/utils/moves';
 import { goToAnchor } from '@/utils/navigation';
-import { parseUnifiedDiff } from '@/utils/unified-diff';
+import { parseUnifiedDiff, type ChangedLines } from '@/utils/unified-diff';
 // ?inline crashes in WXT's content script build, and the CSS needs no processing anyway
 import hintStyles from './moved-lines.css?raw';
 
@@ -21,6 +21,8 @@ export interface MovedLines {
   followUrl(url: string): void;
   /** Reads the PR's diff again, e.g. after new commits were pushed. */
   refresh(): void;
+  /** Finds the moves again with other thresholds, from the diff already read. */
+  setOptions(options: MoveOptions): void;
   stop(): void;
 }
 
@@ -59,12 +61,21 @@ const HIDE_DELAY = 200;
  * rows all the time, so this is a stylesheet keyed on GitHub's own attributes
  * rather than marks on the rows.
  */
-export function createMovedLines(ctx: ContentScriptContext, pr: PullRef, url: string): MovedLines {
+export function createMovedLines(
+  ctx: ContentScriptContext,
+  pr: PullRef,
+  url: string,
+  initialOptions: MoveOptions = {},
+): MovedLines {
+  let options = initialOptions;
+  // The diff as last read, so other thresholds don't need it fetched again
+  let changed: ChangedLines | null = null;
   let hints = new Map<string, MoveHint>();
   let enabled = viewsWholePull(url);
   let stopped = false;
-  // Only the latest read of the diff is applied
+  // Only the latest read of the diff is applied, and only the latest stripes worked out from it
   let loads = 0;
+  let applies = 0;
 
   // The diff is part of GitHub's page, not a shadow root, so this is page CSS
   const style = document.createElement('style');
@@ -111,10 +122,18 @@ export function createMovedLines(ctx: ContentScriptContext, pr: PullRef, url: st
     // Without the diff there's nothing to colour, and what's shown may still be right
     if (stopped || load !== loads || !response || !('diff' in response)) return;
 
-    const blocks = findMovedBlocks(parseUnifiedDiff(response.diff));
+    changed = parseUnifiedDiff(response.diff);
+    await apply();
+  }
+
+  /** Stripes the moves in the diff as last read; only the latest diff and options are applied. */
+  async function apply() {
+    if (!changed) return;
+    const applied = ++applies;
+    const blocks = findMovedBlocks(changed, options);
     const paths = new Set(blocks.flatMap((block) => [block.from.path, block.to.path]));
     const anchors = new Map(await Promise.all(Array.from(paths, async (path) => [path, await diffAnchorId(path)] as const)));
-    if (stopped || load !== loads) return;
+    if (stopped || applied !== applies) return;
 
     style.textContent = JUMP_TARGET + movedLinesCss(blocks, anchors);
     hints = moveHints(blocks, anchors);
@@ -143,6 +162,11 @@ export function createMovedLines(ctx: ContentScriptContext, pr: PullRef, url: st
   return {
     followUrl: (next) => setEnabled(viewsWholePull(next)),
     refresh: () => void load(),
+    setOptions(next) {
+      options = next;
+      // A load still under way uses the new options once it's done
+      void apply();
+    },
     stop,
   };
 }

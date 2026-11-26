@@ -12,9 +12,11 @@ import { RequestError, type PullPage, type PullRef } from '@/utils/github';
 import { isShowPanelMessage } from '@/utils/messages';
 import { goToAnchor } from '@/utils/navigation';
 import type { CachedReview } from '@/utils/progress';
+import { loadSettings, watchSettings, type Settings } from '@/utils/settings';
 import { diagnose } from './diagnose';
 import { createMovedLines, type MovedLines } from './moved-lines';
 import Panel from './Panel.svelte';
+import { LiveSettings } from './settings.svelte';
 import { PanelStatus } from './status.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
 import { createViewedState, type ViewedState } from './viewed';
@@ -47,11 +49,13 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    // Changed in the toolbar button's popup; the panel and moved lines follow without a reload
+    const settings = new LiveSettings(await loadSettings());
     let ui: ShadowRootContentScriptUi<PanelApp> | undefined;
     let markers: TreeMarkers | undefined;
     // Lives as long as the changes tab is open, so toggles seen there outlast panel rebuilds
     let viewed: ViewedState | undefined;
-    // Also there without a panel, since moves are worth seeing on any PR
+    // Also there without a panel, since moves are worth seeing on any PR, unless turned off
     let moves: MovedLines | undefined;
     // The PR whose changes tab is open; hash-only URL changes from scrolling keep it unchanged
     let active: { key: string; pr: PullRef } | null = null;
@@ -99,6 +103,15 @@ export default defineContentScript({
       if (viewed) markers = createTreeMarkers(ctx, null, { viewed });
     }
 
+    /** Starts the moved lines for the active PR when they're turned on, and stops them otherwise. */
+    function followMovedLines(url: string) {
+      moves?.stop();
+      moves =
+        active && settings.showMovedLines
+          ? createMovedLines(ctx, active.pr, url, { minLines: settings.minMovedLines })
+          : undefined;
+    }
+
     async function update(url: string) {
       const pr = parsePullUrl(url);
       const key = pr?.isChangesTab ? `${pr.owner}/${pr.repo}#${pr.number}` : null;
@@ -113,8 +126,7 @@ export default defineContentScript({
       setConversation(active ? { state: 'loading' } : null);
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
-      moves?.stop();
-      moves = active ? createMovedLines(ctx, active.pr, url) : undefined;
+      followMovedLines(url);
       hide();
       if (pr && key) await show(pr, key);
     }
@@ -176,12 +188,10 @@ export default defineContentScript({
 
     async function mountPanel(pr: PullRef, key: string, review: CachedReview) {
       const { fingerprint, items } = review;
-      const [initialIndex, initialPosition, initialSkipViewed, initialAutoAdvance, initialMinimized, anchors] =
+      const [initialIndex, initialPosition, initialMinimized, anchors] =
         await Promise.all([
           loadProgress(pr, fingerprint),
           loadPanelPosition(),
-          skipViewed.getValue(),
-          autoAdvance.getValue(),
           panelMinimized.getValue(),
           Promise.all(items.map((item) => diffAnchorId(item.path))),
         ]);
@@ -205,8 +215,7 @@ export default defineContentScript({
               items,
               initialIndex,
               initialPosition,
-              initialSkipViewed,
-              initialAutoAdvance,
+              settings,
               initialMinimized,
               status: newStatus,
               isViewed: (index) => {
@@ -216,8 +225,6 @@ export default defineContentScript({
               watchViewed: (onChange) => viewedState.watch(onChange),
               onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
-              onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
-              onAutoAdvanceChange: (advance) => void autoAdvance.setValue(advance),
               onMinimizedChange: (value) => {
                 minimized = value;
                 void panelMinimized.setValue(value);
@@ -300,6 +307,13 @@ export default defineContentScript({
     ctx.addEventListener(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') recheckOpenPanel();
     });
+    const unwatchSettings = watchSettings((key, value) => {
+      (settings as Settings)[key] = value;
+      if (key === 'showMovedLines') followMovedLines(location.href);
+      // Matched again from the diff already read, without fetching it again
+      if (key === 'minMovedLines') moves?.setOptions({ minLines: settings.minMovedLines });
+    });
+    ctx.onInvalidated(unwatchSettings);
     await update(location.href);
   },
 });

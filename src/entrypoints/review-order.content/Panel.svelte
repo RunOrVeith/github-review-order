@@ -12,6 +12,7 @@
   } from '@/utils/panel-position';
   import { findStep } from '@/utils/navigation';
   import type { ReviewItem } from '@/utils/review-order';
+  import type { Settings } from '@/utils/settings';
   import type { PanelStatus } from './status.svelte';
 
   interface Props {
@@ -20,9 +21,8 @@
     initialIndex: number;
     /** Where the user last dragged the panel; null keeps it in the bottom-right corner. */
     initialPosition?: PanelPosition | null;
-    initialSkipViewed?: boolean;
-    /** Whether ticking the current file as viewed moves on to the next one. */
-    initialAutoAdvance?: boolean;
+    /** Skip viewed and auto-advance; changed in the toolbar button's popup, so they can change while shown. */
+    settings?: Pick<Settings, 'skipViewed' | 'autoAdvance'>;
     /** Whether the panel starts as just the step and its arrows. */
     initialMinimized?: boolean;
     status?: PanelStatus;
@@ -33,8 +33,6 @@
     /** Scrolls to the item and resolves to whether its file was found on the page. */
     onNavigate: (index: number) => Promise<boolean> | boolean;
     onMove?: (position: PanelPosition) => void;
-    onSkipViewedChange?: (skip: boolean) => void;
-    onAutoAdvanceChange?: (advance: boolean) => void;
     onMinimizedChange?: (minimized: boolean) => void;
     onClose: () => void;
   }
@@ -43,29 +41,24 @@
     items,
     initialIndex,
     initialPosition = null,
-    initialSkipViewed = true,
-    initialAutoAdvance = true,
+    settings = { skipViewed: true, autoAdvance: true },
     initialMinimized = false,
     status,
     isViewed = () => false,
     watchViewed,
     onNavigate,
     onMove,
-    onSkipViewedChange,
-    onAutoAdvanceChange,
     onMinimizedChange,
     onClose,
   }: Props = $props();
 
-  // The panel owns the current step, position and toggles from here on; the initial props only seed them
+  // The panel owns the current step, position and minimizing from here on; the initial props only seed them
   // svelte-ignore state_referenced_locally
   let index = $state(initialIndex);
   // svelte-ignore state_referenced_locally
   let position = $state(initialPosition ?? DEFAULT_PANEL_POSITION);
-  // svelte-ignore state_referenced_locally
-  let skipViewed = $state(initialSkipViewed);
-  // svelte-ignore state_referenced_locally
-  let autoAdvance = $state(initialAutoAdvance);
+  const skipViewed = $derived(settings.skipViewed);
+  const autoAdvance = $derived(settings.autoAdvance);
   // svelte-ignore state_referenced_locally
   let minimized = $state(initialMinimized);
   let missing = $state(false);
@@ -183,16 +176,6 @@
     onMove?.(position);
   }
 
-  function toggleSkipViewed(event: Event) {
-    skipViewed = (event.currentTarget as HTMLInputElement).checked;
-    onSkipViewedChange?.(skipViewed);
-  }
-
-  function toggleAutoAdvance(event: Event) {
-    autoAdvance = (event.currentTarget as HTMLInputElement).checked;
-    onAutoAdvanceChange?.(autoAdvance);
-  }
-
   function setMinimized(value: boolean) {
     // Shrinks and grows from the top-left corner, so the header stays under the pointer
     position = { horizontal: { edge: 'left', offset: placed.x }, vertical: { edge: 'top', offset: placed.y } };
@@ -244,17 +227,6 @@
   </button>
 {/snippet}
 
-{#snippet toggle(label: string, hint: string, id: string, checked: boolean, onchange: (event: Event) => void)}
-  <!-- The empty title keeps the header's own title from showing over this tooltip -->
-  <span class="hint" title="">
-    <label class="toggle">
-      <input type="checkbox" {checked} {onchange} aria-describedby={id} />
-      {label}
-    </label>
-    <span {id} class="tooltip" role="tooltip">{hint}</span>
-  </span>
-{/snippet}
-
 {#snippet nextButton()}
   <button
     class="arrow"
@@ -291,24 +263,6 @@
         {#if item}{index + 1} / {steps.length}{:else}Review order{/if}
         {#if done}<span class="done" aria-hidden="true">✓</span>{/if}
       </span>
-      {#if item && !minimized}
-        <span class="toggles">
-          {@render toggle(
-            'Skip viewed',
-            'Next and Previous jump over files marked as viewed',
-            'review-order-skip-viewed',
-            skipViewed,
-            toggleSkipViewed,
-          )}
-          {@render toggle(
-            'Auto-advance',
-            'Go to the next file once this one is marked as viewed',
-            'review-order-auto-advance',
-            autoAdvance,
-            toggleAutoAdvance,
-          )}
-        </span>
-      {/if}
     </span>
     {#if minimized}
       {#if item}
@@ -606,24 +560,5 @@
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-
-  .toggles {
-    display: flex;
-    gap: 8px;
-  }
-
-  .toggle {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--muted);
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .toggle input {
-    margin: 0;
-    accent-color: var(--accent);
   }
 </style>
