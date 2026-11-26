@@ -126,6 +126,7 @@ You're welcome to contribute if there is a clear flow improvement. I'm going to 
 - `npm run dev:firefox` does the same for firefox
 - `npm test` runs the unit tests, `npm run e2e` the playwright ones (run `npx playwright install chromium` once before)
 - `npm run compile` type checks everything
+- `npm run screenshots` regenerates the screenshots in this README from real PRs in this repo. Run `npm run screenshots -- --login` once before to log into GitHub, see [scripts/screenshots.ts](scripts/screenshots.ts)
 
 ## License
 
