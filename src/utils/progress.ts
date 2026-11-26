@@ -15,12 +15,6 @@ interface SavedReview extends CachedReview {
   savedAt: number;
 }
 
-/** Whether Next and Previous skip files ticked as viewed; shared by all PRs. */
-export const skipViewed = storage.defineItem<boolean>('local:skipViewed', { fallback: true });
-
-/** Whether ticking the current file as viewed moves on to the next one; shared by all PRs. */
-export const autoAdvance = storage.defineItem<boolean>('local:autoAdvance', { fallback: true });
-
 /** Reviews that weren't opened for this long are dropped. */
 export const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 

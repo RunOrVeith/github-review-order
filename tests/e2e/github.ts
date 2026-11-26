@@ -68,8 +68,11 @@ export async function servePullRequest(context: BrowserContext, headSha = 'a'.re
     if (pathname === '/acme/repo/pull/1/files') {
       return route.fulfill({ contentType: 'text/html', body: filesPage() });
     }
-    if (pathname === '/acme/repo/pull/1/changes') {
+    if (pathname === '/acme/repo/pull/1/changes' || pathname.startsWith('/acme/repo/pull/1/changes/')) {
       return route.fulfill({ contentType: 'text/html', body: changesPage(pr.viewed) });
+    }
+    if (pathname === '/acme/repo/pull/1.diff') {
+      return route.fulfill({ contentType: 'text/plain', body: PULL_DIFF });
     }
     return route.fulfill({ status: 404 });
   });
@@ -210,6 +213,62 @@ function fileTree(): string {
     </ul>`;
 }
 
+/** A function the PR moves from one file to another, re-indented on the way. */
+export const MOVED = {
+  from: { path: 'src/core.ts', start: 10 },
+  to: { path: 'src/ui.ts', start: 20 },
+  lines: ['export function resolveRecipient(talent: Talent) {', '  return talent.contactDetails.email;', '}'],
+};
+
+/** The PR's .diff: the moved function, and a line changed in place next to where it went. */
+const PULL_DIFF = [
+  `diff --git a/${MOVED.from.path} b/${MOVED.from.path}`,
+  `--- a/${MOVED.from.path}`,
+  `+++ b/${MOVED.from.path}`,
+  `@@ -${MOVED.from.start},3 +${MOVED.from.start - 1},0 @@`,
+  ...MOVED.lines.map((line) => `-${line}`),
+  `diff --git a/${MOVED.to.path} b/${MOVED.to.path}`,
+  `--- a/${MOVED.to.path}`,
+  `+++ b/${MOVED.to.path}`,
+  `@@ -${MOVED.to.start - 1},1 +${MOVED.to.start - 1},4 @@`,
+  '-const before = 1;',
+  '+const after = 2;',
+  ...MOVED.lines.map((line) => `+  ${line}`),
+  '',
+].join('\n');
+
+/** GitHub's unified diff table for a file: its removed lines, then its added ones, each with GitHub's colours. */
+function diffTable(path: string, removed: [number, string][], added: [number, string][]): string {
+  const anchor = anchorId(path);
+  const cell = (side: string, line: number, color: string, extra = '') =>
+    `<td data-diff-side="${side}" data-line-number="${line}" ${extra} style="background-color: ${color}">`;
+  const removedRow = ([line, text]: [number, string]) => `
+    <tr class="diff-line-row">
+      ${cell('left', line, 'var(--diffBlob-deletionNum-bgColor, rgb(255, 206, 203))', 'data-first-unified-line-number-cell="true"')}${line}</td>
+      <td class="empty-diff-line" style="background-color: var(--diffBlob-deletionNum-bgColor, rgb(255, 206, 203))"></td>
+      ${cell('left', line, 'var(--diffBlob-deletionLine-bgColor, rgb(255, 235, 233))', `data-line-anchor="${anchor}L${line}"`)}<code>-${text}</code></td>
+    </tr>`;
+  const addedRow = ([line, text]: [number, string]) => `
+    <tr class="diff-line-row">
+      <td class="empty-diff-line" style="background-color: var(--diffBlob-additionNum-bgColor, rgb(172, 238, 187))"></td>
+      ${cell('right', line, 'var(--diffBlob-additionNum-bgColor, rgb(172, 238, 187))', 'data-first-unified-line-number-cell="false"')}${line}</td>
+      ${cell('right', line, 'var(--diffBlob-additionLine-bgColor, rgb(218, 251, 225))', `data-line-anchor="${anchor}R${line}"`)}<code>+${text}</code></td>
+    </tr>`;
+  return `<table data-diff-anchor="${anchor}" style="width: 900px; font: 12px monospace"><tbody>
+    ${removed.map(removedRow).join('')}${added.map(addedRow).join('')}
+  </tbody></table>`;
+}
+
+const numbered = (start: number, lines: string[]) => lines.map((line, i): [number, string] => [start + i, line]);
+const DIFF_TABLES: Record<string, string> = {
+  [anchorId(MOVED.from.path)]: diffTable(MOVED.from.path, numbered(MOVED.from.start, MOVED.lines), []),
+  [anchorId(MOVED.to.path)]: diffTable(
+    MOVED.to.path,
+    [[MOVED.to.start - 1, 'const before = 1;']],
+    numbered(MOVED.to.start - 1, ['const after = 2;', ...MOVED.lines.map((line) => `  ${line}`)]),
+  ),
+};
+
 /**
  * GitHub's newer changes view, as on a large PR: only the first file is
  * rendered and the others appear once navigated to, but every file's viewed
@@ -249,6 +308,7 @@ function changesPage(viewed: Set<string>): string {
     </main>
     <script>
       const states = ${JSON.stringify(states)};
+      const tables = ${JSON.stringify(DIFF_TABLES)};
       window.navigatedFiles = [];
 
       function renderFile(anchor) {
@@ -259,7 +319,7 @@ function changesPage(viewed: Set<string>): string {
         container.style.height = '2000px';
         container.innerHTML =
           '<div><div><button type="button" aria-pressed="' + viewed + '" aria-label="' +
-          (viewed ? 'Viewed' : 'Not Viewed') + '">Viewed</button></div></div>';
+          (viewed ? 'Viewed' : 'Not Viewed') + '">Viewed</button></div></div>' + (tables[anchor] ?? '');
         container.querySelector('button').addEventListener('click', (event) => {
           const button = event.currentTarget;
           const pressed = button.getAttribute('aria-pressed') !== 'true';
@@ -269,7 +329,7 @@ function changesPage(viewed: Set<string>): string {
         document.querySelector('main').append(container);
       }
 
-      // GitHub renders a file when it's navigated to
+      // GitHub renders a file when it's navigated to. It ignores line anchors (#<file>L12 or R12).
       addEventListener('hashchange', () => {
         const anchor = location.hash.slice(1);
         navigatedFiles.push(anchor);

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, setSetting, settingIsOn, test } from './fixtures';
 import {
   anchorId,
   CHANGES_STEPS,
@@ -49,7 +49,8 @@ test('opens at the first file when not skipping viewed ones', async ({ context, 
   const pr = await servePullRequest(context);
   pr.viewed = new Set([first!.path, second!.path]);
   await page.goto(CHANGES_URL);
-  await panel(page).getByRole('checkbox', { name: 'Skip viewed' }).uncheck();
+  await expect(panel(page).getByText(`3 / ${CHANGES_STEPS}`)).toBeVisible();
+  await setSetting(context, 'Skip viewed', false);
   await panel(page).getByRole('button', { name: 'Previous' }).click();
   await panel(page).getByRole('button', { name: 'Previous' }).click();
   await expect(panel(page).getByText(`1 / ${CHANGES_STEPS}`)).toBeVisible();
@@ -59,19 +60,23 @@ test('opens at the first file when not skipping viewed ones', async ({ context, 
   await expect(page).toHaveURL(`${CHANGES_URL}#${anchorId(first!.path)}`);
 });
 
-test('can be turned off and stays off', async ({ context, page }) => {
+test('can be turned off in the popup and stays off', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(CHANGES_URL);
-  const toggle = panel(page).getByRole('checkbox', { name: 'Skip viewed' });
-  await expect(toggle).toBeChecked();
+  await expect(panel(page).getByText(`1 / ${CHANGES_STEPS}`)).toBeVisible();
+  expect(await settingIsOn(context, 'Skip viewed')).toBe(true);
 
-  await toggle.uncheck();
+  // The open panel follows without a reload
+  await setSetting(context, 'Skip viewed', false);
   await panel(page).getByRole('button', { name: 'Next' }).click();
   await expect(panel(page).getByText(`2 / ${CHANGES_STEPS}`)).toBeVisible();
   await expect(panel(page).getByText('File not found in this PR')).toHaveCount(0);
 
   await page.reload();
-  await expect(panel(page).getByRole('checkbox', { name: 'Skip viewed' })).not.toBeChecked();
+  await panel(page).getByRole('button', { name: 'Previous' }).click();
+  await panel(page).getByRole('button', { name: 'Next' }).click();
+  await expect(panel(page).getByText(`2 / ${CHANGES_STEPS}`)).toBeVisible();
+  expect(await settingIsOn(context, 'Skip viewed')).toBe(false);
 });
 
 test('follows files being ticked on the page', async ({ context, page }) => {
@@ -101,7 +106,7 @@ test('re-reads viewed states after a push and GitHub refresh', async ({ context,
   await expect(panel(page).getByText(`1 / ${CHANGES_STEPS}`)).toBeVisible();
   // Unlike GitHub, the fixture doesn't re-render files after a refresh, so the second one renders as still ticked
   // once navigated to, which auto-advance would take for the user ticking it
-  await panel(page).getByRole('checkbox', { name: 'Auto-advance' }).uncheck();
+  await setSetting(context, 'Auto-advance', false);
 
   // The push changed the second file, so GitHub unticked it; the page's embedded data still says viewed
   pr.headSha = 'b'.repeat(40);
@@ -187,36 +192,20 @@ test('ticking the current file moves on to the next unviewed one', async ({ cont
   await expect(page).toHaveURL(`${CHANGES_URL}#${anchorId(third!.path)}`);
 });
 
-test('auto-advance can be turned off and stays off', async ({ context, page }) => {
+test('auto-advance can be turned off in the popup and stays off', async ({ context, page }) => {
   await servePullRequest(context);
   await page.goto(CHANGES_URL);
-  const toggle = panel(page).getByRole('checkbox', { name: 'Auto-advance' });
-  await expect(toggle).toBeChecked();
+  await expect(panel(page).getByText(`1 / ${CHANGES_STEPS}`)).toBeVisible();
+  expect(await settingIsOn(context, 'Auto-advance')).toBe(true);
 
-  await toggle.uncheck();
+  await setSetting(context, 'Auto-advance', false);
   await page.locator(`#${anchorId(first!.path)}`).getByRole('button', { name: 'Not Viewed' }).click();
   // The tree's eye follows the same viewed states, so once it shows the tick has been seen
   await expect(page.locator(`[id="${first!.path}"] [data-review-order-eye]`)).toBeVisible();
   await expect(panel(page).getByText(`1 / ${CHANGES_STEPS}`)).toBeVisible();
 
   await page.reload();
-  await expect(panel(page).getByRole('checkbox', { name: 'Auto-advance' })).not.toBeChecked();
-});
-
-test('the toggles explain themselves on hover', async ({ context, page }) => {
-  await servePullRequest(context);
-  await page.goto(CHANGES_URL);
-  const tooltip = panel(page).getByRole('tooltip');
-  await expect(tooltip).toBeHidden();
-
-  await panel(page).getByText('Skip viewed').hover();
-  await expect(tooltip).toHaveText('Next and Previous jump over files marked as viewed');
-  await panel(page).getByText('Auto-advance').hover();
-  await expect(tooltip).toHaveText('Go to the next file once this one is marked as viewed');
-  // Inside the panel, so it's never cut off at the edge of the window
-  const [outer, inner] = [(await panel(page).boundingBox())!, (await tooltip.boundingBox())!];
-  expect(inner.x).toBeGreaterThanOrEqual(outer.x);
-  expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+  expect(await settingIsOn(context, 'Auto-advance')).toBe(false);
 });
 
 test('says when every file is viewed, including the ones left out of the order', async ({ context, page }) => {

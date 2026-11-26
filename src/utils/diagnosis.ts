@@ -46,7 +46,8 @@ export interface Diagnosis {
   tree: { files: number; unreadable: boolean } | null;
   /** How many files' viewed states the page has, as toggles and as embedded data (null without it). */
   viewed: { rendered: number; embedded: number | null } | null;
-  panel: 'shown' | 'closed' | 'hidden';
+  /** Hidden when there's no review order to show, closed when the user closed it. */
+  panel: 'shown' | 'minimized' | 'closed' | 'hidden';
   /** What keeps the review order from working, worst first. */
   problems: string[];
   /** Things worth knowing that aren't problems, e.g. what a layout can't read. */

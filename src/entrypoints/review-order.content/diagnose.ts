@@ -14,7 +14,6 @@ export interface DiagnosisInput {
 
 export const NOT_A_CHANGES_TAB = "This isn't a pull request's changes tab, where the review order is shown.";
 export const NO_REVIEW_ORDER = 'No "Review order" section in the description or the comments that were read.';
-export const PANEL_CLOSED = 'The panel was closed. It comes back when the changes tab is opened again.';
 export const NO_TREE = "GitHub's file tree isn't on the page, so it can't show the review order.";
 
 /** Everything the toolbar button's popup shows, read now so the page's current state is what's reported. */
@@ -40,7 +39,6 @@ export function diagnose(input: DiagnosisInput, root: Document = document): Diag
     if (conversation.layout !== null && conversation.review === null) notes.push(NO_REVIEW_ORDER);
   }
   if (tree.files === 0 && !tree.unreadable) notes.push(NO_TREE);
-  if (panel === 'closed') notes.push(PANEL_CLOSED);
 
   return { url, pr, conversation, tree, viewed, panel, problems, notes };
 }

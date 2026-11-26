@@ -9,9 +9,14 @@ import {
   type ProblemsMessage,
 } from '@/utils/diagnosis';
 import { RequestError, type PullPage, type PullRef } from '@/utils/github';
+import { isShowPanelMessage } from '@/utils/messages';
+import { goToAnchor } from '@/utils/navigation';
 import type { CachedReview } from '@/utils/progress';
+import { loadSettings, watchSettings, type Settings } from '@/utils/settings';
 import { diagnose } from './diagnose';
+import { createMovedLines, type MovedLines } from './moved-lines';
 import Panel from './Panel.svelte';
+import { LiveSettings } from './settings.svelte';
 import { PanelStatus } from './status.svelte';
 import { createTreeMarkers, type TreeMarkers } from './tree-markers';
 import { createViewedState, type ViewedState } from './viewed';
@@ -31,6 +36,11 @@ interface Review {
 // The e2e build sets it to 0 so tests don't have to wait.
 const RECHECK_INTERVAL = Number(import.meta.env.WXT_RECHECK_INTERVAL ?? 30_000);
 
+/** What the mounted panel lets the content script do to it. */
+interface PanelApp {
+  expand(): void;
+}
+
 export default defineContentScript({
   // GitHub navigates between pages without reloading, so the script has to be on every page
   matches: ['https://github.com/*'],
@@ -39,22 +49,29 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
-    let ui: ShadowRootContentScriptUi<ReturnType<typeof mount>> | undefined;
+    // Changed in the toolbar button's popup; the panel and moved lines follow without a reload
+    const settings = new LiveSettings(await loadSettings());
+    let ui: ShadowRootContentScriptUi<PanelApp> | undefined;
     let markers: TreeMarkers | undefined;
     // Lives as long as the changes tab is open, so toggles seen there outlast panel rebuilds
     let viewed: ViewedState | undefined;
+    // Also there without a panel, since moves are worth seeing on any PR, unless turned off
+    let moves: MovedLines | undefined;
     // The PR whose changes tab is open; hash-only URL changes from scrolling keep it unchanged
     let active: { key: string; pr: PullRef } | null = null;
     // What the panel currently shows, so re-checks only rebuild it when something changed
     let shownFingerprint: string | null = null;
     // What the current panel shows besides the steps
     let status: PanelStatus | undefined;
+    // A re-read of the PR in progress, so another one isn't started on top of it
     let recheck: Promise<void> | null = null;
     let lastRead = 0;
     // How reading the active PR went, for the toolbar button's diagnosis; null off a changes tab
     let conversation: ConversationState | null = null;
     // Whether the user closed the panel on the active PR
     let closed = false;
+    // Whether the shown panel is minimized to just its step and arrows
+    let minimized = false;
     // The problem count the badge last showed; null so the first one is always sent
     let reportedProblems: number | null = null;
 
@@ -86,16 +103,30 @@ export default defineContentScript({
       if (viewed) markers = createTreeMarkers(ctx, null, { viewed });
     }
 
+    /** Starts the moved lines for the active PR when they're turned on, and stops them otherwise. */
+    function followMovedLines(url: string) {
+      moves?.stop();
+      moves =
+        active && settings.showMovedLines
+          ? createMovedLines(ctx, active.pr, url, { minLines: settings.minMovedLines })
+          : undefined;
+    }
+
     async function update(url: string) {
       const pr = parsePullUrl(url);
       const key = pr?.isChangesTab ? `${pr.owner}/${pr.repo}#${pr.number}` : null;
-      if (key === (active?.key ?? null)) return;
+      if (key === (active?.key ?? null)) {
+        // Picking some of the PR's commits stays on its changes tab
+        moves?.followUrl(url);
+        return;
+      }
 
       active = pr && key ? { key, pr } : null;
       closed = false;
       setConversation(active ? { state: 'loading' } : null);
       viewed?.stop();
       viewed = active ? createViewedState(ctx) : undefined;
+      followMovedLines(url);
       hide();
       if (pr && key) await show(pr, key);
     }
@@ -148,23 +179,25 @@ export default defineContentScript({
       }
 
       // GitHub unticks files changed by new commits, but the page's embedded states don't update
-      if (rechecking) await viewed?.refresh(pr);
+      if (rechecking) {
+        moves?.refresh();
+        await viewed?.refresh(pr);
+      }
       await mountPanel(pr, key, review);
     }
 
     async function mountPanel(pr: PullRef, key: string, review: CachedReview) {
       const { fingerprint, items } = review;
-      const [initialIndex, initialPosition, initialSkipViewed, initialAutoAdvance, initialMinimized, anchors] =
+      const [initialIndex, initialPosition, initialMinimized, anchors] =
         await Promise.all([
           loadProgress(pr, fingerprint),
           loadPanelPosition(),
-          skipViewed.getValue(),
-          autoAdvance.getValue(),
           panelMinimized.getValue(),
           Promise.all(items.map((item) => diffAnchorId(item.path))),
         ]);
       const viewedState = viewed;
       if (active?.key !== key || !viewedState) return;
+      minimized = initialMinimized;
 
       const newStatus = new PanelStatus();
       showStatus(newStatus, pr, review);
@@ -182,8 +215,7 @@ export default defineContentScript({
               items,
               initialIndex,
               initialPosition,
-              initialSkipViewed,
-              initialAutoAdvance,
+              settings,
               initialMinimized,
               status: newStatus,
               isViewed: (index) => {
@@ -193,9 +225,10 @@ export default defineContentScript({
               watchViewed: (onChange) => viewedState.watch(onChange),
               onNavigate: (index) => navigate(steps, index),
               onMove: (position) => void panelPosition.setValue(position),
-              onSkipViewedChange: (skip) => void skipViewed.setValue(skip),
-              onAutoAdvanceChange: (advance) => void autoAdvance.setValue(advance),
-              onMinimizedChange: (minimized) => void panelMinimized.setValue(minimized),
+              onMinimizedChange: (value) => {
+                minimized = value;
+                void panelMinimized.setValue(value);
+              },
               onClose: () => {
                 closed = true;
                 hide();
@@ -230,12 +263,32 @@ export default defineContentScript({
 
     /** Picks up new pushes and description edits while the changes tab stays open. */
     function recheckOpenPanel(always = false) {
-      // A closed panel stays closed until the changes tab is opened again
+      // A closed panel stays closed until the changes tab is opened again or the toolbar popup brings it back
       if (!active || !ui || recheck) return;
       // Each check downloads the whole conversation page, which is large on busy PRs
       if (!always && Date.now() - lastRead < RECHECK_INTERVAL) return;
       recheck = show(active.pr, active.key, true).finally(() => (recheck = null));
     }
+
+    /** Brings back a closed or minimized panel when asked from the toolbar button's popup. */
+    function showPanel() {
+      // Off the changes tab there's no panel to show
+      if (!active) return;
+      closed = false;
+      if (ui) return ui.mounted?.expand();
+      // Re-reads the PR, since it may have changed while the panel was closed
+      if (!recheck) recheck = show(active.pr, active.key).finally(() => (recheck = null));
+    }
+
+    // The toolbar button's popup asks what was found on this tab, and can bring back the panel
+    const onMessage = (message: unknown, _sender: unknown, sendResponse: (diagnosis: Diagnosis) => void) => {
+      if (isShowPanelMessage(message)) return void showPanel();
+      if (!isDiagnoseMessage(message)) return;
+      const panel = ui ? (minimized ? 'minimized' : 'shown') : closed ? 'closed' : 'hidden';
+      sendResponse(diagnose({ url: location.href, pr: active?.key ?? null, conversation, panel }));
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    ctx.onInvalidated(() => browser.runtime.onMessage.removeListener(onMessage));
 
     // The event can fire before location.href is updated, so use the URL it carries
     ctx.addEventListener(window, 'wxt:locationchange', ({ newUrl }) => void update(newUrl.href));
@@ -249,19 +302,18 @@ export default defineContentScript({
       },
       { capture: true },
     );
-    // The toolbar button's popup asks what was found on this tab
-    const onMessage = (message: unknown, _sender: unknown, sendResponse: (diagnosis: Diagnosis) => void) => {
-      if (!isDiagnoseMessage(message)) return;
-      const panel = ui ? 'shown' : closed ? 'closed' : 'hidden';
-      sendResponse(diagnose({ url: location.href, pr: active?.key ?? null, conversation, panel }));
-    };
-    browser.runtime.onMessage.addListener(onMessage);
-    ctx.onInvalidated(() => browser.runtime.onMessage.removeListener(onMessage));
     // Coming back to the tab, e.g. after pushing from a terminal
     ctx.addEventListener(window, 'focus', () => recheckOpenPanel());
     ctx.addEventListener(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') recheckOpenPanel();
     });
+    const unwatchSettings = watchSettings((key, value) => {
+      (settings as Settings)[key] = value;
+      if (key === 'showMovedLines') followMovedLines(location.href);
+      // Matched again from the diff already read, without fetching it again
+      if (key === 'minMovedLines') moves?.setOptions({ minLines: settings.minMovedLines });
+    });
+    ctx.onInvalidated(unwatchSettings);
     await update(location.href);
   },
 });
@@ -285,9 +337,7 @@ function anchorAt(review: Review | undefined, index: number): string | undefined
 async function navigate(review: Review, index: number) {
   const id = anchorAt(review, index);
   if (id === undefined) return false;
-  // Clear the hash first so jumping to the file that's already selected still scrolls
-  if (location.hash === `#${id}`) history.replaceState(null, '', location.pathname + location.search);
-  location.hash = id;
+  goToAnchor(id);
   const inTree = review.markers.setCurrent(id);
   // Large PRs only render the files near the screen, so the page alone can't tell what's in the PR
   const found = review.viewed.isInPr(id) || inTree;

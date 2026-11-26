@@ -4,7 +4,6 @@ import {
   NO_REVIEW_ORDER,
   NO_TREE,
   NOT_A_CHANGES_TAB,
-  PANEL_CLOSED,
   type DiagnosisInput,
 } from '@/entrypoints/review-order.content/diagnose';
 import { UNREADABLE_TREE } from '@/entrypoints/review-order.content/tree-markers';
@@ -93,7 +92,7 @@ describe('diagnose', () => {
     const conversation = read({ review: null, limitations: ['Comments load separately.'] });
     expect(diagnose(input({ conversation, panel: 'closed' }), changesPage(''))).toMatchObject({
       problems: [],
-      notes: ['Comments load separately.', NO_REVIEW_ORDER, NO_TREE, PANEL_CLOSED],
+      notes: ['Comments load separately.', NO_REVIEW_ORDER, NO_TREE],
     });
   });
 });
